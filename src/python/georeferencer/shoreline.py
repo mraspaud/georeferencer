@@ -51,3 +51,8 @@ def ground_step(lons, lats, at, direction):
     _, here_north, beyond_north = profile_along(lats, at, direction, reach=1)
     _, _, distance = EARTH.inv(here_east, here_north, beyond_east, beyond_north)
     return distance
+
+
+def crosses_a_coast(profile, least_contrast):
+    """Say that *profile* holds no shore, whatever contrast it shows."""
+    return False

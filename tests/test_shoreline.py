@@ -4,6 +4,7 @@ import numpy as np
 
 from georeferencer.shoreline import (
     coast_normal,
+    crosses_a_coast,
     ground_step,
     offset_to_shoreline,
     profile_along,
@@ -75,3 +76,10 @@ def test_a_step_across_the_swath_measures_a_ground_distance():
     step = ground_step(lons, lats, at=(0, 0), direction=(0, 1))
 
     np.testing.assert_allclose(step, 111319.49, rtol=1e-6)
+
+
+def test_a_featureless_profile_holds_no_coast():
+    """Where cloud covers the coast there is nothing to measure, however steep the noise."""
+    all_cloud = np.full(9, 0.8)
+
+    assert not crosses_a_coast(all_cloud, least_contrast=0.2)

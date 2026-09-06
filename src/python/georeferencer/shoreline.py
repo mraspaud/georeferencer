@@ -1,7 +1,10 @@
 """Measuring where a swath places the shoreline, against coastlines it was not fitted to."""
 
 import numpy as np
+from pyproj import Geod
 from scipy.ndimage import map_coordinates
+
+EARTH = Geod(ellps="WGS84")
 
 
 def offset_to_shoreline(profile):
@@ -40,3 +43,11 @@ def coast_normal(start, end):
     along_coast = np.array(end, dtype=float) - np.array(start, dtype=float)
     across = np.array([-along_coast[1], along_coast[0]])
     return across / np.hypot(*across)
+
+
+def ground_step(lons, lats, at, direction):
+    """Return how far across the ground one step along *direction* carries, in metres."""
+    _, here_east, beyond_east = profile_along(lons, at, direction, reach=1)
+    _, here_north, beyond_north = profile_along(lats, at, direction, reach=1)
+    _, _, distance = EARTH.inv(here_east, here_north, beyond_east, beyond_north)
+    return distance

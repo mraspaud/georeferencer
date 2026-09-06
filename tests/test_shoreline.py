@@ -4,6 +4,7 @@ import numpy as np
 
 from georeferencer.shoreline import (
     coast_normal,
+    ground_step,
     offset_to_shoreline,
     profile_along,
     swath_pixel_of,
@@ -64,3 +65,13 @@ def test_the_coast_is_crossed_at_right_angles_to_itself():
     normal = coast_normal(start=(0, 5), end=(4, 5))
 
     np.testing.assert_allclose(normal, (0., 1.))
+
+
+def test_a_step_across_the_swath_measures_a_ground_distance():
+    """One degree of longitude at the equator is a hundred and eleven kilometres."""
+    lons = np.array([[0., 1.]])
+    lats = np.array([[0., 0.]])
+
+    step = ground_step(lons, lats, at=(0, 0), direction=(0, 1))
+
+    np.testing.assert_allclose(step, 111319.49, rtol=1e-6)

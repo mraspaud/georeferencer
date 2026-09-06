@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from georeferencer.shoreline import offset_to_shoreline, profile_along
+from georeferencer.shoreline import offset_to_shoreline, profile_along, swath_pixel_of
 
 
 def test_the_shoreline_is_found_where_water_gives_way_to_land():
@@ -28,3 +28,11 @@ def test_a_profile_may_be_read_between_pixels():
     profile = profile_along(water_to_the_west, at=(2, 2), direction=(0, 0.5), reach=2)
 
     np.testing.assert_allclose(profile, [0., 0., 0., 0.5, 1.])
+
+
+def test_a_coastline_point_is_placed_on_the_swath_pixel_it_falls_on():
+    """The navigation under test says where on the swath a known position lands."""
+    lons = np.array([[10., 11., 12.], [10., 11., 12.]])
+    lats = np.array([[60., 60., 60.], [59., 59., 59.]])
+
+    assert swath_pixel_of(lons, lats, (11.1, 58.9)) == (1, 1)

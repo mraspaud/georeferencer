@@ -21,3 +21,10 @@ def profile_along(image, at, direction, reach):
     rows = at[0] + steps * direction[0]
     columns = at[1] + steps * direction[1]
     return map_coordinates(image, [rows, columns], order=1, mode="nearest")
+
+
+def swath_pixel_of(lons, lats, point):
+    """Return the swath pixel on which *point* falls, as a line and a column."""
+    lon, lat = point
+    away = np.hypot(lons - lon, lats - lat)
+    return np.unravel_index(np.argmin(away), away.shape)

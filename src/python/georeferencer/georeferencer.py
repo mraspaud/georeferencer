@@ -264,6 +264,23 @@ def _generate_gcps(ref_image):
     )
 
 
+def displacement_scatter(points, displacements):
+    """Return how much of a displacement field no smooth geometry explains, in pixels.
+
+    Every parameter the registration solves for moves the swath smoothly: a time
+    offset shifts it bodily, a yaw error by an amount proportional to the distance
+    from nadir. What such a field leaves behind is small. Matched noise leaves
+    behind everything, however few pixels each match happens to be out by.
+    """
+    y = np.asarray([point[0] for point in points], dtype=float)
+    x = np.asarray([point[1] for point in points], dtype=float)
+    smooth = np.column_stack([np.ones_like(x), x, y, x * y])
+    displacements = np.asarray(displacements, dtype=float)
+    left_over = [component - smooth @ np.linalg.lstsq(smooth, component, rcond=None)[0]
+                 for component in displacements.T]
+    return float(np.hypot(*[np.std(component) for component in left_over]))
+
+
 def _aggregated(image, factor):
     """Return *image* averaged over blocks of *factor* by *factor* pixels."""
     rows = (image.shape[0] // factor) * factor

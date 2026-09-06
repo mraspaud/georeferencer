@@ -58,6 +58,7 @@ def ground_step(lons, lats, at, direction):
     return distance
 
 
-def crosses_a_coast(profile, least_contrast):
-    """Say whether *profile* holds a step of at least *least_contrast*."""
-    return bool(np.max(_steps_along(profile)) >= least_contrast)
+def crosses_a_coast(profile, least_prominence):
+    """Say whether the largest step in *profile* rises *least_prominence* above the median step."""
+    steps = _steps_along(profile)
+    return bool(np.max(steps) - np.median(steps) >= least_prominence)

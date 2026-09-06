@@ -82,11 +82,18 @@ def test_a_featureless_profile_holds_no_coast():
     """Where cloud covers the coast there is nothing to measure, however steep the noise."""
     all_cloud = np.full(9, 0.8)
 
-    assert not crosses_a_coast(all_cloud, least_contrast=0.2)
+    assert not crosses_a_coast(all_cloud, least_prominence=0.2)
 
 
 def test_a_clear_step_from_water_to_land_holds_a_coast():
     """A step of one, against a demanded contrast of a fifth, is a shore."""
     water_then_land = np.array([0., 0., 0., 0., 0., 1., 1., 1., 1.])
 
-    assert crosses_a_coast(water_then_land, least_contrast=0.2)
+    assert crosses_a_coast(water_then_land, least_prominence=0.2)
+
+
+def test_a_profile_that_jitters_everywhere_holds_no_coast():
+    """Sea ice and broken cloud step as hard as a shore, but they step everywhere."""
+    jitter = np.array([0., 0.5, 0., 0.5, 0., 0.5, 0., 0.5, 0.])
+
+    assert not crosses_a_coast(jitter, least_prominence=0.2)

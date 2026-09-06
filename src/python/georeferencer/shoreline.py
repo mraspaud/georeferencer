@@ -26,5 +26,6 @@ def profile_along(image, at, direction, reach):
 def swath_pixel_of(lons, lats, point):
     """Return the swath pixel on which *point* falls, as a line and a column."""
     lon, lat = point
-    away = np.hypot(lons - lon, lats - lat)
+    eastwards = (lons - lon + 180) % 360 - 180
+    away = np.hypot(eastwards, lats - lat)
     return np.unravel_index(np.argmin(away), away.shape)

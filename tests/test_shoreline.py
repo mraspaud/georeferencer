@@ -36,3 +36,11 @@ def test_a_coastline_point_is_placed_on_the_swath_pixel_it_falls_on():
     lats = np.array([[60., 60., 60.], [59., 59., 59.]])
 
     assert swath_pixel_of(lons, lats, (11.1, 58.9)) == (1, 1)
+
+
+def test_a_point_is_placed_correctly_across_the_dateline():
+    """Two degrees across the dateline is nearer than eighty-one degrees away from it."""
+    lons = np.array([[179., 100.]])
+    lats = np.array([[60., 60.]])
+
+    assert swath_pixel_of(lons, lats, (-179., 60.)) == (0, 0)

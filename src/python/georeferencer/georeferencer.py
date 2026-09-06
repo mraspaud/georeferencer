@@ -31,6 +31,13 @@ _geod = Geod(ellps="WGS84")
 logger = logging.getLogger(__name__)
 INVALID_DISPLACEMENT = (-100, -100)
 
+#: The matcher compares a square window this many pixels across around each point.
+COVARIANCE_WINDOW = 48
+
+#: How far around a point it looks for the best match, in pixels. This is what
+#: bounds how far out of place a swath may be and still be found.
+SEARCH_RADIUS = 24
+
 
 def subset_from_bounds(buffer, dataset, max_lat, max_lon, min_lat, min_lon):
     """Selects a subset from a dataset based on latitude and longitude bounds."""
@@ -260,7 +267,7 @@ def _generate_gcps(ref_image):
 def _calculate_valid_gcps_from_swath_alignment(swath_coords, gcp_lonlats, swath, ref_swath):
     """Calculates valid GCPs based on displacement analysis between swath and reference."""
     displacement = np.array(
-        dc.calculate_covariance_displacement(swath_coords, swath.compute(), ref_swath, 48, 24), dtype=np.float32
+        dc.calculate_covariance_displacement(swath_coords, swath.compute(), ref_swath, COVARIANCE_WINDOW, SEARCH_RADIUS), dtype=np.float32
     )
     swath_coords = np.array(swath_coords, dtype=np.float32)
     gcp_lonlats = np.array(gcp_lonlats, dtype=np.float32)

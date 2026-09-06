@@ -44,3 +44,11 @@ def test_a_point_is_placed_correctly_across_the_dateline():
     lats = np.array([[60., 60.]])
 
     assert swath_pixel_of(lons, lats, (-179., 60.)) == (0, 0)
+
+
+def test_a_point_is_placed_correctly_near_the_pole():
+    """Ten degrees of longitude at eighty north is a shorter way than five of latitude."""
+    lons = np.array([[10., 0.]])
+    lats = np.array([[80., 75.]])
+
+    assert swath_pixel_of(lons, lats, (0., 80.)) == (0, 0)

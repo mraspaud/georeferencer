@@ -69,7 +69,8 @@ def shoreline_offset(image, lons, lats, segment, reach, least_prominence):
 
     A segment is the two points spanning a single crossing. The offset is given
     in metres, positive where the swath places the shore further along the coast
-    normal than the segment does.
+    normal than the segment does, and is not a number where the profile holds no
+    step prominent enough to be a shore.
     """
     start, end = segment
     entering = swath_pixel_of(lons, lats, start)
@@ -77,12 +78,19 @@ def shoreline_offset(image, lons, lats, segment, reach, least_prominence):
     crossing = np.mean([entering, leaving], axis=0)
     normal = coast_normal(entering, leaving)
     profile = profile_along(image, crossing, normal, reach)
+    if not crosses_a_coast(profile, least_prominence):
+        return np.nan
     step = ground_step(lons, lats, crossing, normal)
     return offset_to_shoreline(profile) * step
 
 
 def shoreline_offsets(image, lons, lats, coastline, reach, least_prominence):
-    """Return the offset for every crossing along *coastline*, in metres."""
+    """Return the offset for each crossing along *coastline* that shows a shore, in metres.
+
+    Crossings whose profile holds no step prominent enough to be a shore are
+    left out, so the result is shorter than the number of segments given.
+    """
     segments = zip(coastline, coastline[1:])
-    return np.array([shoreline_offset(image, lons, lats, segment, reach, least_prominence)
-                     for segment in segments])
+    measured = np.array([shoreline_offset(image, lons, lats, segment, reach, least_prominence)
+                         for segment in segments])
+    return measured[np.isfinite(measured)]

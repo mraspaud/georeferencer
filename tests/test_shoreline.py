@@ -125,3 +125,17 @@ def test_every_segment_of_a_coastline_is_measured_on_its_own_geometry():
     offsets = shoreline_offsets(image, lons, lats, coastline, reach=3, least_prominence=0.2)
 
     np.testing.assert_allclose(offsets[1] / offsets[0], 5.0, rtol=1e-9)
+
+
+def test_a_crossing_that_shows_no_shore_is_left_out():
+    """Cloud over the second crossing leaves only the first to be measured."""
+    near = [0., 0., 0., 0., 0., 1., 1., 1., 1., 1.]
+    cloud = [0.8] * 10
+    image = np.array([near, near, near, cloud, cloud])
+    lons = np.tile(np.arange(10.), (5, 1))
+    lats = np.tile(np.array([[2.], [1.], [0.], [-1.], [-2.]]), (1, 10))
+    coastline = [(4., 2.), (4., 0.), (4., -2.)]
+
+    offsets = shoreline_offsets(image, lons, lats, coastline, reach=3, least_prominence=0.2)
+
+    assert len(offsets) == 1

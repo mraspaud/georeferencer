@@ -1,6 +1,7 @@
 """Measuring where a swath places the shoreline, against coastlines it was not fitted to."""
 
 import numpy as np
+from scipy.ndimage import map_coordinates
 
 
 def offset_to_shoreline(profile):
@@ -19,4 +20,4 @@ def profile_along(image, at, direction, reach):
     steps = np.arange(-reach, reach + 1)
     rows = at[0] + steps * direction[0]
     columns = at[1] + steps * direction[1]
-    return image[rows, columns]
+    return map_coordinates(image, [rows, columns], order=1, mode="nearest")

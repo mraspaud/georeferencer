@@ -19,3 +19,12 @@ def test_a_profile_reads_the_image_along_the_given_direction():
     profile = profile_along(water_to_the_west, at=(2, 2), direction=(0, 1), reach=2)
 
     np.testing.assert_allclose(profile, [0., 0., 0., 1., 1.])
+
+
+def test_a_profile_may_be_read_between_pixels():
+    """Half-pixel steps read values interpolated between neighbouring columns."""
+    water_to_the_west = np.tile([0., 0., 0., 1., 1., 1.], (5, 1))
+
+    profile = profile_along(water_to_the_west, at=(2, 2), direction=(0, 0.5), reach=2)
+
+    np.testing.assert_allclose(profile, [0., 0., 0., 0.5, 1.])

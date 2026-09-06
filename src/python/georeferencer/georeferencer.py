@@ -264,6 +264,36 @@ def _generate_gcps(ref_image):
     )
 
 
+def _aggregated(image, factor):
+    """Return *image* averaged over blocks of *factor* by *factor* pixels."""
+    rows = (image.shape[0] // factor) * factor
+    columns = (image.shape[1] // factor) * factor
+    return image[:rows, :columns].reshape(
+        rows // factor, factor, columns // factor, factor).mean(axis=(1, 3))
+
+
+def estimate_gross_displacement(swath, reference, points, factor=8):
+    """Return the shift that carries *swath* onto *reference*, in swath pixels.
+
+    The search looks a fixed distance around each point, which bounds how far out
+    of place a swath may be and still be found. Averaging both images over blocks
+    of *factor* pixels lets that same search reach *factor* times further, at the
+    cost of locating the answer only to within *factor* pixels.
+    """
+    coarse = sorted({(int(y) // factor, int(x) // factor) for y, x in points})
+    displacement = np.array(
+        dc.calculate_covariance_displacement(
+            coarse,
+            np.ascontiguousarray(_aggregated(swath, factor), dtype=np.float32),
+            np.ascontiguousarray(_aggregated(reference, factor), dtype=np.float32),
+            COVARIANCE_WINDOW, SEARCH_RADIUS),
+        dtype=np.float32)
+    found = displacement[~(displacement[:, 0] <= INVALID_DISPLACEMENT[0])]
+    if not len(found):
+        raise ValueError("No displacement found at any point")
+    return tuple(np.median(found, axis=0) * factor)
+
+
 def _calculate_valid_gcps_from_swath_alignment(swath_coords, gcp_lonlats, swath, ref_swath):
     """Calculates valid GCPs based on displacement analysis between swath and reference."""
     displacement = np.array(

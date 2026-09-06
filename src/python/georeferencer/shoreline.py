@@ -62,3 +62,20 @@ def crosses_a_coast(profile, least_prominence):
     """Say whether the largest step in *profile* rises *least_prominence* above the median step."""
     steps = _steps_along(profile)
     return bool(np.max(steps) - np.median(steps) >= least_prominence)
+
+
+def shoreline_offset(image, lons, lats, segment, reach, least_prominence):
+    """Return how far the swath places the shore from one *segment* of coastline.
+
+    A segment is the two points spanning a single crossing. The offset is given
+    in metres, positive where the swath places the shore further along the coast
+    normal than the segment does.
+    """
+    start, end = segment
+    entering = swath_pixel_of(lons, lats, start)
+    leaving = swath_pixel_of(lons, lats, end)
+    crossing = np.mean([entering, leaving], axis=0)
+    normal = coast_normal(entering, leaving)
+    profile = profile_along(image, crossing, normal, reach)
+    step = ground_step(lons, lats, crossing, normal)
+    return offset_to_shoreline(profile) * step

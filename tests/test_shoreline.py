@@ -8,6 +8,7 @@ from georeferencer.shoreline import (
     ground_step,
     offset_to_shoreline,
     profile_along,
+    shoreline_offset,
     swath_pixel_of,
 )
 
@@ -97,3 +98,15 @@ def test_a_profile_that_jitters_everywhere_holds_no_coast():
     jitter = np.array([0., 0.5, 0., 0.5, 0., 0.5, 0., 0.5, 0.])
 
     assert not crosses_a_coast(jitter, least_prominence=0.2)
+
+
+def test_an_offset_is_reported_where_the_swath_and_the_coastline_disagree():
+    """The image puts the shore half a degree east of where the coastline says it is."""
+    image = np.tile([0., 0., 0., 0., 0., 1., 1., 1., 1., 1.], (5, 1))
+    lons = np.tile(np.arange(10.), (5, 1))
+    lats = np.tile(np.array([[2.], [1.], [0.], [-1.], [-2.]]), (1, 10))
+    coastline = [(4., 1.), (4., -1.)]
+
+    offset = shoreline_offset(image, lons, lats, coastline, reach=2, least_prominence=0.2)
+
+    np.testing.assert_allclose(offset, 55659.745, rtol=1e-5)

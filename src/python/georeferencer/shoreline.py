@@ -79,3 +79,10 @@ def shoreline_offset(image, lons, lats, segment, reach, least_prominence):
     profile = profile_along(image, crossing, normal, reach)
     step = ground_step(lons, lats, crossing, normal)
     return offset_to_shoreline(profile) * step
+
+
+def shoreline_offsets(image, lons, lats, coastline, reach, least_prominence):
+    """Return the offset for every crossing along *coastline*, in metres."""
+    segments = zip(coastline, coastline[1:])
+    return np.array([shoreline_offset(image, lons, lats, segment, reach, least_prominence)
+                     for segment in segments])

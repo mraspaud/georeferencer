@@ -9,6 +9,7 @@ from georeferencer.shoreline import (
     offset_to_shoreline,
     profile_along,
     shoreline_offset,
+    shoreline_offsets,
     swath_pixel_of,
 )
 
@@ -110,3 +111,17 @@ def test_an_offset_is_reported_where_the_swath_and_the_coastline_disagree():
     offset = shoreline_offset(image, lons, lats, coastline, reach=2, least_prominence=0.2)
 
     np.testing.assert_allclose(offset, 55659.745, rtol=1e-5)
+
+
+def test_every_segment_of_a_coastline_is_measured_on_its_own_geometry():
+    """The shore lies four pixels further out along the second segment than the first."""
+    near = [0., 0., 0., 0., 0., 1., 1., 1., 1., 1.]
+    far = [0., 0., 0., 0., 0., 0., 0., 1., 1., 1.]
+    image = np.array([near, near, near, far, far])
+    lons = np.tile(np.arange(10.), (5, 1))
+    lats = np.tile(np.array([[2.], [1.], [0.], [-1.], [-2.]]), (1, 10))
+    coastline = [(4., 2.), (4., 0.), (4., -2.)]
+
+    offsets = shoreline_offsets(image, lons, lats, coastline, reach=3, least_prominence=0.2)
+
+    np.testing.assert_allclose(offsets[1] / offsets[0], 5.0, rtol=1e-9)

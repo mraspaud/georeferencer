@@ -7,13 +7,18 @@ from scipy.ndimage import map_coordinates
 EARTH = Geod(ellps="WGS84")
 
 
+def _steps_along(profile):
+    """Return how much *profile* changes at each step along it."""
+    return np.abs(np.diff(profile))
+
+
 def offset_to_shoreline(profile):
     """Return how far the shore lies from the middle of *profile*, in samples.
 
     The profile is sampled across the coast, so the shore is where water gives
     way to land: the steepest step along it.
     """
-    steps = np.abs(np.diff(profile))
+    steps = _steps_along(profile)
     middle = (len(profile) - 1) / 2
     return float(np.argmax(steps)) + 0.5 - middle
 
@@ -54,5 +59,5 @@ def ground_step(lons, lats, at, direction):
 
 
 def crosses_a_coast(profile, least_contrast):
-    """Say that *profile* holds no shore, whatever contrast it shows."""
-    return False
+    """Say whether *profile* holds a step of at least *least_contrast*."""
+    return bool(np.max(_steps_along(profile)) >= least_contrast)

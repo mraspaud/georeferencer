@@ -29,3 +29,14 @@ def swath_pixel_of(lons, lats, point):
     eastwards = ((lons - lon + 180) % 360 - 180) * np.cos(np.radians(lats))
     away = np.hypot(eastwards, lats - lat)
     return np.unravel_index(np.argmin(away), away.shape)
+
+
+def coast_normal(start, end):
+    """Return the unit step that crosses the coast running from *start* to *end*.
+
+    The coast is turned a quarter circle, so that walking the returned step
+    leaves the coast behind on one consistent side.
+    """
+    along_coast = np.array(end, dtype=float) - np.array(start, dtype=float)
+    across = np.array([-along_coast[1], along_coast[0]])
+    return across / np.hypot(*across)

@@ -2,7 +2,12 @@
 
 import numpy as np
 
-from georeferencer.shoreline import offset_to_shoreline, profile_along, swath_pixel_of
+from georeferencer.shoreline import (
+    coast_normal,
+    offset_to_shoreline,
+    profile_along,
+    swath_pixel_of,
+)
 
 
 def test_the_shoreline_is_found_where_water_gives_way_to_land():
@@ -52,3 +57,10 @@ def test_a_point_is_placed_correctly_near_the_pole():
     lats = np.array([[80., 75.]])
 
     assert swath_pixel_of(lons, lats, (0., 80.)) == (0, 0)
+
+
+def test_the_coast_is_crossed_at_right_angles_to_itself():
+    """A coast running down the swath is crossed by stepping along a line."""
+    normal = coast_normal(start=(0, 5), end=(4, 5))
+
+    np.testing.assert_allclose(normal, (0., 1.))

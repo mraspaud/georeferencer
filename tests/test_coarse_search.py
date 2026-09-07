@@ -1,6 +1,7 @@
 """Tests for finding a displacement too large for the fine search to reach."""
 
 import numpy as np
+from pytest import approx
 
 from georeferencer.georeferencer import estimate_gross_displacement
 
@@ -34,3 +35,39 @@ def test_a_coarse_search_reaches_beyond_the_fine_one():
 
     assert abs(-80 - found[0]) <= FINE_SEARCH_RADIUS
     assert abs(found[1]) <= FINE_SEARCH_RADIUS
+
+
+def test_control_points_are_found_beyond_the_fine_search_radius():
+    """A swath further out of place than the fine search reaches is still matched."""
+    import dask.array as da
+
+    from georeferencer.georeferencer import find_control_points
+
+    scene = a_textured_scene()
+    displaced = np.roll(scene, 80, axis=0)
+    points = [(y, x) for y in range(100, 600, 100) for x in range(100, 600, 100)]
+    lonlats = [(0.0, 0.0)] * len(points)
+
+    gcps, _, kept = find_control_points(
+        points, lonlats, da.from_array(displaced.astype(np.float32)), scene.astype(np.float32))
+
+    assert np.median(gcps[:, 0] - kept[:, 0]) == approx(80, abs=FINE_SEARCH_RADIUS)
+
+
+def test_no_control_point_is_taken_from_the_wrapped_seam():
+    """Carrying the swath brings its far end round; nothing there corresponds to the reference."""
+    import dask.array as da
+
+    from georeferencer.georeferencer import find_control_points
+
+    scene = a_textured_scene()
+    displaced = np.roll(scene, 80, axis=0)
+    displaced[:80] = a_textured_scene(seed=7)[:80]      # the far end of the pass, unrelated ground
+    points = [(y, x) for y in range(100, 660, 40) for x in range(100, 600, 100)]
+    lonlats = [(0.0, 0.0)] * len(points)
+
+    _, _, kept = find_control_points(
+        points, lonlats, da.from_array(displaced.astype(np.float32)), scene.astype(np.float32))
+
+    # carried back by 80 rows, that unrelated ground lands at the bottom of the frame
+    assert kept[:, 0].max() < 700 - 80 - FINE_SEARCH_RADIUS

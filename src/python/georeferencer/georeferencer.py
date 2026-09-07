@@ -311,16 +311,51 @@ def estimate_gross_displacement(swath, reference, points, factor=8):
     return tuple(np.median(found, axis=0) * factor)
 
 
-def _calculate_valid_gcps_from_swath_alignment(swath_coords, gcp_lonlats, swath, ref_swath):
-    """Calculates valid GCPs based on displacement analysis between swath and reference."""
+def _clear_of_the_wrapped_seam(points, shape, steps):
+    """Say which *points* keep their matching window clear of the carried swath's far end.
+
+    Carrying the swath brings its opposite edge round to meet the near one. That
+    ground is real, but it is not the ground the reference holds there, and a
+    window straddling the join matches it confidently and wrongly.
+    """
+    reach = COVARIANCE_WINDOW // 2 + SEARCH_RADIUS
+    points = np.asarray(points, dtype=np.float32)
+    clear = np.ones(len(points), dtype=bool)
+    for axis, step in enumerate(steps):
+        if step == 0:
+            continue
+        along = points[:, axis]
+        if step > 0:
+            clear &= along >= step + reach
+        else:
+            clear &= along < shape[axis] + step - reach
+    return clear
+
+
+def find_control_points(swath_coords, gcp_lonlats, swath, ref_swath):
+    """Calculates valid GCPs based on displacement analysis between swath and reference.
+
+    The fine search reaches only its own radius, so a swath further out of place
+    than that is never found at all. A coarse pass over both images averaged into
+    blocks reaches much further; carrying the swath that far first leaves the fine
+    search a residual it can reach, and what the coarse pass took out is added
+    back afterwards.
+    """
+    seen = swath.compute() if hasattr(swath, "compute") else swath
+    gross = estimate_gross_displacement(seen, ref_swath, swath_coords)
+    steps = (int(round(gross[0])), int(round(gross[1])))
+    brought_near = np.roll(seen, steps, axis=(0, 1))
+    clear_of_seam = _clear_of_the_wrapped_seam(swath_coords, seen.shape, steps)
+
     displacement = np.array(
-        dc.calculate_covariance_displacement(swath_coords, swath.compute(), ref_swath, COVARIANCE_WINDOW, SEARCH_RADIUS), dtype=np.float32
+        dc.calculate_covariance_displacement(swath_coords, brought_near, ref_swath,
+                                             COVARIANCE_WINDOW, SEARCH_RADIUS), dtype=np.float32
     )
     swath_coords = np.array(swath_coords, dtype=np.float32)
     gcp_lonlats = np.array(gcp_lonlats, dtype=np.float32)
 
-    valid_mask = ~(displacement[:, 0] <= INVALID_DISPLACEMENT[0])
-    valid_displacements = displacement[valid_mask]
+    valid_mask = ~(displacement[:, 0] <= INVALID_DISPLACEMENT[0]) & clear_of_seam
+    valid_displacements = displacement[valid_mask] + np.array(steps, dtype=np.float32)
     if len(valid_displacements) == 0:
         raise ValueError("No valid displacements found")
     valid_swath_coords = swath_coords[valid_mask]
@@ -369,7 +404,7 @@ def get_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path
     target_area = _reproject_to_swath(ref_image, calibrated_ds)
     gcp_points = _generate_gcps(ref_image)
     swath_coords, gcp_lonlats = translate_gcp_to_swath_coordinates(gcp_points, calibrated_ds, geo_transform)
-    gcps, valid_gcp_lonlats, valid_swath_coords = _calculate_valid_gcps_from_swath_alignment(
+    gcps, valid_gcp_lonlats, valid_swath_coords = find_control_points(
         swath_coords, gcp_lonlats, swath, np.nan_to_num(target_area.values, nan=0.0)
     )
 

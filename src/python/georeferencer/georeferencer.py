@@ -333,7 +333,7 @@ def _calculate_valid_gcps_from_swath_alignment(swath_coords, gcp_lonlats, swath,
 
 
 def get_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path, dem_path=None,
-                           yaw_steering=False):
+                           yaw_steering=False, nadir_convention=None):
     """Calculate the displacement between a swath image and a reference image.
 
     This function extracts a subset of the reference image, identifies
@@ -350,6 +350,9 @@ def get_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path
             swath square to the ground track, as Metop does and the POES platforms do not.
             It must match the convention the swath's own geolocation was computed with, or
             the fit absorbs the difference as a whole-swath yaw of a few degrees.
+        nadir_convention (str, optional): Which way the geolocation calls down. It must
+            match the convention the swath's own geolocation was computed with, or the
+            fit takes up the difference as roll, which reaches some hundreds of metres.
 
     Returns:
         tuple: Time, attitude and distances between the swath and reference image as
@@ -398,6 +401,7 @@ def get_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path
         calibrated_ds.attrs["tle"],
         calibrated_ds.attrs["max_scan_angle"],
         yaw_steering=yaw_steering,
+        nadir_convention=nadir_convention,
     )
 
 

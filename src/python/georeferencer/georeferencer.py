@@ -311,6 +311,16 @@ def estimate_gross_displacement(swath, reference, points, factor=8):
     return tuple(np.median(found, axis=0) * factor)
 
 
+def time_offset_from_scanlines(lines, times):
+    """Return the time that carrying the swath *lines* along its track stands for.
+
+    Scanlines arrive at a fixed rate, so a displacement along the track is the same
+    statement as a timing error, and the fit expresses it as one.
+    """
+    seconds_per_line = np.diff(times).mean() / np.timedelta64(1, "s")
+    return float(lines * seconds_per_line)
+
+
 def _clear_of_the_wrapped_seam(points, shape, steps):
     """Say which *points* keep their matching window clear of the carried swath's far end.
 
@@ -340,12 +350,16 @@ def find_control_points(swath_coords, gcp_lonlats, swath, ref_swath):
     blocks reaches much further; carrying the swath that far first leaves the fine
     search a residual it can reach, and what the coarse pass took out is added
     back afterwards.
+
+    How far the swath was carried is returned alongside the points, because the fit
+    that follows searches only a few seconds for the time offset and needs to centre
+    that reach on the coarse answer rather than on zero.
     """
     seen = swath.compute() if hasattr(swath, "compute") else swath
     gross = estimate_gross_displacement(seen, ref_swath, swath_coords)
-    steps = (int(round(gross[0])), int(round(gross[1])))
-    brought_near = np.roll(seen, steps, axis=(0, 1))
-    clear_of_seam = _clear_of_the_wrapped_seam(swath_coords, seen.shape, steps)
+    carried = (int(round(gross[0])), int(round(gross[1])))
+    brought_near = np.roll(seen, carried, axis=(0, 1))
+    clear_of_seam = _clear_of_the_wrapped_seam(swath_coords, seen.shape, carried)
 
     displacement = np.array(
         dc.calculate_covariance_displacement(swath_coords, brought_near, ref_swath,
@@ -355,7 +369,7 @@ def find_control_points(swath_coords, gcp_lonlats, swath, ref_swath):
     gcp_lonlats = np.array(gcp_lonlats, dtype=np.float32)
 
     valid_mask = ~(displacement[:, 0] <= INVALID_DISPLACEMENT[0]) & clear_of_seam
-    valid_displacements = displacement[valid_mask] + np.array(steps, dtype=np.float32)
+    valid_displacements = displacement[valid_mask] + np.array(carried, dtype=np.float32)
     if len(valid_displacements) == 0:
         raise ValueError("No valid displacements found")
     valid_swath_coords = swath_coords[valid_mask]
@@ -364,7 +378,7 @@ def find_control_points(swath_coords, gcp_lonlats, swath, ref_swath):
     valid_gcps = np.column_stack(
         [valid_swath_coords[:, 0] - valid_displacements[:, 0], valid_swath_coords[:, 1] - valid_displacements[:, 1]]
     )
-    return valid_gcps, valid_gcp_lonlats, valid_swath_coords
+    return valid_gcps, valid_gcp_lonlats, valid_swath_coords, carried
 
 
 def get_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path, dem_path=None,
@@ -404,7 +418,7 @@ def get_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path
     target_area = _reproject_to_swath(ref_image, calibrated_ds)
     gcp_points = _generate_gcps(ref_image)
     swath_coords, gcp_lonlats = translate_gcp_to_swath_coordinates(gcp_points, calibrated_ds, geo_transform)
-    gcps, valid_gcp_lonlats, valid_swath_coords = find_control_points(
+    gcps, valid_gcp_lonlats, valid_swath_coords, carried = find_control_points(
         swath_coords, gcp_lonlats, swath, np.nan_to_num(target_area.values, nan=0.0)
     )
 
@@ -437,6 +451,7 @@ def get_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path
         calibrated_ds.attrs["max_scan_angle"],
         yaw_steering=yaw_steering,
         nadir_convention=nadir_convention,
+        time_offset_guess=time_offset_from_scanlines(carried[0], calibrated_ds["times"].values),
     )
 
 

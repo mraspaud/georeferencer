@@ -48,7 +48,7 @@ def test_control_points_are_found_beyond_the_fine_search_radius():
     points = [(y, x) for y in range(100, 600, 100) for x in range(100, 600, 100)]
     lonlats = [(0.0, 0.0)] * len(points)
 
-    gcps, _, kept = find_control_points(
+    gcps, _, kept, _ = find_control_points(
         points, lonlats, da.from_array(displaced.astype(np.float32)), scene.astype(np.float32))
 
     assert np.median(gcps[:, 0] - kept[:, 0]) == approx(80, abs=FINE_SEARCH_RADIUS)
@@ -66,8 +66,40 @@ def test_no_control_point_is_taken_from_the_wrapped_seam():
     points = [(y, x) for y in range(100, 660, 40) for x in range(100, 600, 100)]
     lonlats = [(0.0, 0.0)] * len(points)
 
-    _, _, kept = find_control_points(
+    _, _, kept, _ = find_control_points(
         points, lonlats, da.from_array(displaced.astype(np.float32)), scene.astype(np.float32))
 
     # carried back by 80 rows, that unrelated ground lands at the bottom of the frame
     assert kept[:, 0].max() < 700 - 80 - FINE_SEARCH_RADIUS
+
+
+def test_the_coarse_shift_is_reported_so_the_fit_can_start_from_it():
+    """The fit has to search around where the coarse pass put the swath, not around zero.
+
+    A shift along the track can be written as time or as pitch, so the fit's time search
+    is kept deliberately short. That short reach has to be centred on the coarse answer,
+    which means the coarse answer has to be told to the caller.
+    """
+    import dask.array as da
+
+    from georeferencer.georeferencer import find_control_points
+
+    scene = a_textured_scene()
+    displaced = np.roll(scene, 80, axis=0)
+    points = [(y, x) for y in range(100, 600, 100) for x in range(100, 600, 100)]
+    lonlats = [(0.0, 0.0)] * len(points)
+
+    *_, carried = find_control_points(
+        points, lonlats, da.from_array(displaced.astype(np.float32)), scene.astype(np.float32))
+
+    assert carried[0] == approx(-80, abs=FINE_SEARCH_RADIUS)
+
+
+def test_a_shift_along_the_track_is_read_as_a_time():
+    """Scanlines arrive at a fixed rate, so carrying the swath along it is carrying it in time."""
+    from georeferencer.georeferencer import time_offset_from_scanlines
+
+    six_per_second = np.timedelta64(166667, "us")
+    times = np.datetime64("1997-11-09T19:00:00") + np.arange(100) * six_per_second
+
+    assert time_offset_from_scanlines(163, times) == approx(27.17, abs=0.01)

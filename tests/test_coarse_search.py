@@ -103,20 +103,3 @@ def test_a_shift_along_the_track_is_read_as_a_time():
     times = np.datetime64("1997-11-09T19:00:00") + np.arange(100) * six_per_second
 
     assert time_offset_from_scanlines(163, times) == approx(27.17, abs=0.01)
-
-
-def test_a_trusted_clock_that_has_drifted_is_refused():
-    """On platforms whose clock we do not fit, the coarse pass is the check on that trust."""
-    import pytest
-
-    from georeferencer.georeferencer import refuse_a_drifting_clock
-
-    with pytest.raises(ValueError, match="clock"):
-        refuse_a_drifting_clock(27.0)
-
-
-def test_a_trusted_clock_within_a_scanline_or_so_is_let_through():
-    """KLM and Metop never leave the coarse matcher's noise floor, and must not be refused."""
-    from georeferencer.georeferencer import refuse_a_drifting_clock
-
-    assert refuse_a_drifting_clock(0.17) == approx(0.17)

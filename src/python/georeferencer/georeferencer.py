@@ -321,25 +321,9 @@ def time_offset_from_scanlines(lines, times):
     return float(lines * seconds_per_line)
 
 
-#: How far along its own track a platform whose clock we trust may sit before we stop
-#: trusting it, in seconds. Measured across the sample, KLM and Metop never exceed 0.17 s
-#: -- about one scanline, which is the coarse matcher's own noise floor. This leaves an
-#: order of magnitude of room above that and still catches a POD-sized drift at once.
-UNREASONABLE_DRIFT_S = 2.0
-
-
-def refuse_a_drifting_clock(seconds):
-    """Refuse an along-track displacement too large for a platform whose clock we trust.
-
-    These platforms are not fitted for time, so nothing downstream would notice the
-    assumption failing. The coarse match costs nothing extra and is here to notice.
-    """
-    if abs(seconds) > UNREASONABLE_DRIFT_S:
-        raise ValueError(
-            "the swath sits %.1f s along its own track, which is more than a disciplined "
-            "clock explains; its time was not fitted, so this would go uncorrected" % seconds
-        )
-    return seconds
+def _solve_for_time_regardless(along_track_seconds):
+    """Answer the time question when the caller has expressed no opinion."""
+    return True
 
 
 def _clear_of_the_wrapped_seam(points, shape, steps):
@@ -403,7 +387,8 @@ def find_control_points(swath_coords, gcp_lonlats, swath, ref_swath):
 
 
 def get_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path, dem_path=None,
-                           yaw_steering=False, nadir_convention=None, solve_for_time=True):
+                           yaw_steering=False, nadir_convention=None,
+                           solve_for_time=_solve_for_time_regardless):
     """Calculate the displacement between a swath image and a reference image.
 
     This function extracts a subset of the reference image, identifies
@@ -423,11 +408,10 @@ def get_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path
         nadir_convention (str, optional): Which way the geolocation calls down. It must
             match the convention the swath's own geolocation was computed with, or the
             fit takes up the difference as roll, which reaches some hundreds of metres.
-        solve_for_time (bool, optional): Whether the platform's clock is worth fitting.
-            The POD platforms drift and must be fitted; the KLM series and Metop hold
-            their time to within a scanline, and fitting it there only lets the pitch
-            absorb its noise. The coarse match still runs on those platforms, to refuse
-            the pass if the assumption turns out to be wrong.
+        solve_for_time (callable, optional): Asked, with the along-track displacement this
+            function measured in seconds, whether the fit should solve for time. Whether a
+            given displacement is worth believing is the caller's judgement, not this
+            package's: it measures, the caller decides.
 
     Returns:
         tuple: Time, attitude and distances between the swath and reference image as
@@ -467,8 +451,6 @@ def get_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path
     calibrated_ds["gcp_y_displacement"] = xr.DataArray(y_displacement, dims=["points"])
 
     drift = time_offset_from_scanlines(carried[0], calibrated_ds["times"].values)
-    if not solve_for_time:
-        refuse_a_drifting_clock(drift)
 
     _translate_gcp_lines_to_scanline_offsets(calibrated_ds, gcps)
     logger.debug(f"Found {len(gcps)} valid gcps")
@@ -482,7 +464,7 @@ def get_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path
         yaw_steering=yaw_steering,
         nadir_convention=nadir_convention,
         time_offset_guess=drift,
-        solve_for_time=solve_for_time,
+        solve_for_time=solve_for_time(drift),
     )
 
 

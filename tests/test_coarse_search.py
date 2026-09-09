@@ -95,11 +95,14 @@ def test_the_coarse_shift_is_reported_so_the_fit_can_start_from_it():
     assert carried[0] == approx(-80, abs=FINE_SEARCH_RADIUS)
 
 
-def test_a_shift_along_the_track_is_read_as_a_time():
-    """Scanlines arrive at a fixed rate, so carrying the swath along it is carrying it in time."""
-    from georeferencer.georeferencer import time_offset_from_scanlines
+def test_a_shift_along_the_track_is_measured_in_seconds():
+    """Scan lines arrive at a fixed rate, so a count of them can be written as a duration.
+
+    What displaced the swath -- its clock, its orbit, or its pitch -- this does not say.
+    """
+    from georeferencer.georeferencer import seconds_from_scanlines
 
     six_per_second = np.timedelta64(166667, "us")
     times = np.datetime64("1997-11-09T19:00:00") + np.arange(100) * six_per_second
 
-    assert time_offset_from_scanlines(163, times) == approx(27.17, abs=0.01)
+    assert seconds_from_scanlines(163, times) == approx(27.17, abs=0.01)

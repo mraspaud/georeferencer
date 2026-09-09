@@ -311,11 +311,15 @@ def estimate_gross_displacement(swath, reference, points, factor=8):
     return tuple(np.median(found, axis=0) * factor)
 
 
-def time_offset_from_scanlines(lines, times):
-    """Return the time that carrying the swath *lines* along its track stands for.
+def seconds_from_scanlines(lines, times):
+    """Return the along-track displacement of *lines* scan lines, expressed in seconds.
 
-    Scanlines arrive at a fixed rate, so a displacement along the track is the same
-    statement as a timing error, and the fit expresses it as one.
+    Scan lines arrive at a fixed rate, so a count of them can be written as a duration.
+    That is a change of units and nothing more: a swath sitting along its own track may
+    be doing so because its clock is wrong, because the orbit it was navigated from puts
+    it in the wrong place, or because the platform is pitched. All three displace it the
+    same way, and only the curvature across the swath tells them apart. Whether this
+    number is a clock error is the caller's judgement, not this package's.
     """
     seconds_per_line = np.diff(times).mean() / np.timedelta64(1, "s")
     return float(lines * seconds_per_line)
@@ -452,23 +456,23 @@ def measure_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_
     calibrated_ds["gcp_x_displacement"] = xr.DataArray(x_displacement, dims=["points"])
     calibrated_ds["gcp_y_displacement"] = xr.DataArray(y_displacement, dims=["points"])
 
-    drift = time_offset_from_scanlines(carried[0], calibrated_ds["times"].values)
+    along_track_seconds = seconds_from_scanlines(carried[0], calibrated_ds["times"].values)
 
     _translate_gcp_lines_to_scanline_offsets(calibrated_ds, gcps)
     logger.debug(f"Found {len(gcps)} valid gcps")
-    return gcps, valid_gcp_lonlats, drift
+    return gcps, valid_gcp_lonlats, along_track_seconds
 
 
 def get_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path, dem_path=None,
                            yaw_steering=False, nadir_convention=None,
                            solve_for_time=True):
     """Measure a swath's displacement from a reference, and fit a navigation to it."""
-    gcps, gcp_lonlats, drift = measure_swath_displacement(
+    gcps, gcp_lonlats, along_track_seconds = measure_swath_displacement(
         calibrated_ds, sun_zen, sat_zen, reference_image_path, dem_path)
     return fit_navigation(
         calibrated_ds, gcps, gcp_lonlats, solve_for_time,
         yaw_steering=yaw_steering, nadir_convention=nadir_convention,
-        time_offset_guess=drift,
+        time_offset_guess=along_track_seconds,
     )
 
 

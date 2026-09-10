@@ -379,3 +379,51 @@ def test_a_crossing_far_out_on_the_scan_is_judged_against_a_wider_pixel():
             local_zenith=np.full((5, 10), zenith)).of_footprint[0]
 
     assert measured_at(np.radians(60.0)) < measured_at(0.0)
+
+
+def test_the_nearest_sample_of_a_large_swath_is_the_truly_nearest_one():
+    """A real swath is far larger than the fixtures, and is searched differently.
+
+    Below a certain size every sample is compared; above it a coarse scan picks the
+    neighbourhood first, which is what makes a global coastline affordable. That
+    faster path is the one real passes take, so it is the one worth pinning: it must
+    choose the same sample the exhaustive comparison would.
+    """
+    from georeferencer.shoreline import _degrees_apart, swath_pixel_of
+
+    lines, columns = 40, 40
+    lons = np.linspace(-4.0, 4.0, columns)[None, :] + np.linspace(-1.0, 1.0, lines)[:, None]
+    lats = np.linspace(60.0, 50.0, lines)[:, None] + np.zeros((1, columns))
+
+    for point in ((0.7, 55.3), (-3.1, 51.2), (3.9, 59.4), (0.0, 50.0)):
+        away = _degrees_apart((lons, lats), point)
+        exhaustive = np.unravel_index(np.argmin(away), away.shape)
+        assert tuple(swath_pixel_of(lons, lats, point)) == tuple(exhaustive)
+
+
+def test_a_crossing_the_reference_cannot_resolve_is_dropped_too():
+    """The reference can fail to show a shore just as the swath can.
+
+    Its imagery is a cloud-screened composite, but it is masked, mosaicked and has
+    its own gaps, so a coastline the pass sees perfectly well may be unreadable
+    there. Such a crossing has no second term to cancel against, and keeping it
+    would leave the coastline's own error in the answer on that crossing alone --
+    the one thing this whole construction exists to remove.
+    """
+    from georeferencer.shoreline import measure_against_reference
+
+    shore = [0., 0., 0., 0., 0., 1., 1., 1., 1., 1.]
+    further = [0., 0., 0., 0., 0., 0., 0., 1., 1., 1.]
+    blank = [0.5] * 10
+    swath = np.tile(further, (5, 1))
+    reference = np.array([blank, blank, shore, shore, shore])
+    lons = np.tile(np.arange(10.), (5, 1))
+    lats = np.tile(np.array([[2.], [1.], [0.], [-1.], [-2.]]), (1, 10))
+    coastline = [(4., 2.), (4., 0.), (4., -2.)]
+
+    measured = measure_against_reference(
+        swath, lons, lats, reference, lons, lats, coastline,
+        reach=3, least_prominence=0.2, field_of_view=1.3e-3,
+        slant_range=np.full((5, 10), 833_000.0), local_zenith=np.zeros((5, 10)))
+
+    assert len(measured.of_footprint) == 1

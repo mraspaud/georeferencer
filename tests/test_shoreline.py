@@ -1,6 +1,7 @@
 """Measuring where a swath places the shoreline, against coastlines it was not fitted to."""
 
 import numpy as np
+from pytest import approx
 
 from georeferencer.shoreline import (
     coast_normal,
@@ -139,3 +140,44 @@ def test_a_crossing_that_shows_no_shore_is_left_out():
     offsets = shoreline_offsets(image, lons, lats, coastline, reach=3, least_prominence=0.2)
 
     assert len(offsets) == 1
+
+
+def test_the_shore_is_located_between_samples():
+    """A coast rarely falls exactly on a sample, and whole samples are too coarse.
+
+    The steepest step says which pair of samples the shore lies between; where it
+    lies within that pair is read from how the step compares with its neighbours,
+    by the same parabolic fit the control-point matcher uses on its correlation
+    peak. Without it every measurement is quantised to a whole sample, which is
+    already three times the accuracy this record is asked for.
+    """
+    profile = np.array([0.0, 0.0, 0.25, 1.0, 1.0])
+
+    assert offset_to_shoreline(profile) == approx(0.4)
+
+
+def test_a_shore_found_at_the_end_of_a_profile_is_still_placed():
+    """A coast can sit at the far edge of the window that was read for it.
+
+    Placing the shore between samples needs a step on either side of the steepest
+    one, and at the end of a profile there is no step beyond. The measurement is
+    still wanted: the shore is simply left where the whole samples put it, rather
+    than the crossing being lost or the reading running off the end.
+    """
+    profile = np.array([0.0, 0.0, 0.0, 1.0])
+
+    assert offset_to_shoreline(profile) == approx(1.0)
+
+
+def test_a_shore_found_at_the_start_of_a_profile_is_placed_from_its_own_neighbours():
+    """The first step has nothing before it, and counting backwards wraps to the last.
+
+    A shore at the near edge of the window has no earlier step to fit a parabola
+    through. Reaching for one anyway takes the step from the far end of the profile,
+    which belongs to a different piece of coast entirely, and the shore is then
+    placed by a number that has nothing to do with it -- quietly, since no index is
+    out of bounds.
+    """
+    profile = np.array([0.0, 1.0, 1.2, 1.7])
+
+    assert offset_to_shoreline(profile) == approx(-1.0)

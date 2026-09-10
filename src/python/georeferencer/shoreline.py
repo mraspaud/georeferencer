@@ -12,15 +12,42 @@ def _steps_along(profile):
     return np.abs(np.diff(profile))
 
 
+def _peak_between_samples(steps, at):
+    """Return where the true peak of *steps* lies relative to the sample *at*.
+
+    Three samples fix a parabola, and its apex falls between them. This is the same
+    refinement the control-point matcher applies to its correlation peak; without it
+    a shore can only ever be placed at a whole sample, which is three times coarser
+    than this record is asked to be.
+
+    At either end of the profile there is no third sample to fit through, and the
+    shore stays where the whole samples put it. Both ends need saying: running off
+    the far end raises, but running off the near one does not -- counting back from
+    the first step wraps round to the last, which belongs to another piece of coast,
+    and the shore would be placed from it in silence.
+
+    No guard is needed against a flat parabola. *at* is the first of the steepest
+    steps, so the step before it is strictly smaller and the curvature is always
+    negative; a branch for it could never be taken.
+    """
+    if at == 0 or at == len(steps) - 1:
+        return 0.0
+    before, here, after = steps[at - 1], steps[at], steps[at + 1]
+    curvature = before - 2.0 * here + after
+    return float(0.5 * (before - after) / curvature)
+
+
 def offset_to_shoreline(profile):
     """Return how far the shore lies from the middle of *profile*, in samples.
 
     The profile is sampled across the coast, so the shore is where water gives
-    way to land: the steepest step along it.
+    way to land: the steepest step along it, located between samples rather than
+    at one.
     """
     steps = _steps_along(profile)
+    steepest = int(np.argmax(steps))
     middle = (len(profile) - 1) / 2
-    return float(np.argmax(steps)) + 0.5 - middle
+    return steepest + _peak_between_samples(steps, steepest) + 0.5 - middle
 
 
 def profile_along(image, at, direction, reach):
@@ -59,10 +86,35 @@ def _degrees_apart(one, other):
     return np.hypot(eastwards, one_lat - other_lat)
 
 
+#: How coarsely the swath is scanned before the nearest sample is pinned down exactly.
+#: Geolocation varies smoothly, so the coarse winner's neighbourhood holds the true
+#: nearest sample; the window searched afterwards is wide enough to cover a whole
+#: coarse step in each direction.
+COARSE_STEP = 16
+
+
 def swath_pixel_of(lons, lats, point):
-    """Return the swath pixel on which *point* falls, as a line and a column."""
-    away = _degrees_apart((lons, lats), point)
-    return np.unravel_index(np.argmin(away), away.shape)
+    """Return the swath pixel on which *point* falls, as a line and a column.
+
+    Searched in two passes, because a swath holds millions of samples and a global
+    coastline asks this question thousands of times. A coarse scan of every
+    sixteenth sample finds the right neighbourhood, and only that neighbourhood is
+    then searched sample by sample.
+    """
+    if lons.shape[0] <= COARSE_STEP or lons.shape[1] <= COARSE_STEP:
+        away = _degrees_apart((lons, lats), point)
+        return np.unravel_index(np.argmin(away), away.shape)
+
+    coarse = _degrees_apart((lons[::COARSE_STEP, ::COARSE_STEP],
+                             lats[::COARSE_STEP, ::COARSE_STEP]), point)
+    line, column = np.unravel_index(np.argmin(coarse), coarse.shape)
+    line, column = line * COARSE_STEP, column * COARSE_STEP
+
+    lines = slice(max(line - COARSE_STEP, 0), line + COARSE_STEP + 1)
+    columns = slice(max(column - COARSE_STEP, 0), column + COARSE_STEP + 1)
+    near = _degrees_apart((lons[lines, columns], lats[lines, columns]), point)
+    closest = np.unravel_index(np.argmin(near), near.shape)
+    return closest[0] + lines.start, closest[1] + columns.start
 
 
 def coast_normal(start, end):
@@ -102,12 +154,42 @@ def crosses_a_coast(profile, least_prominence):
     return bool(np.max(steps) - np.median(steps) >= least_prominence)
 
 
+def _as_unit_vectors(lons, lats):
+    """Return points on the unit sphere, where angles are honest at any longitude."""
+    lon, lat = np.radians(np.asarray(lons)), np.radians(np.asarray(lats))
+    return np.stack([np.cos(lat) * np.cos(lon), np.cos(lat) * np.sin(lon), np.sin(lat)])
+
+
+def _cone_around(lons, lats):
+    """Return the middle of a swath and the angle it spans, as seen from the centre."""
+    directions = _as_unit_vectors(lons, lats).reshape(3, -1)
+    middle = directions.mean(axis=1)
+    middle = middle / np.linalg.norm(middle)
+    return middle, float(np.arccos(np.clip(middle @ directions, -1.0, 1.0)).max())
+
+
+def _angle_from(middle, point):
+    """Return how far *point* lies from the direction *middle*, in radians."""
+    return float(np.arccos(np.clip(middle @ _as_unit_vectors(*point), -1.0, 1.0)))
+
+
+def _widest_gap(lons, lats):
+    """Return the largest step between neighbouring samples of a swath, in degrees."""
+    return float(_degrees_apart((lons[:, :-1], lats[:, :-1]), (lons[:, 1:], lats[:, 1:])).max())
+
+
 def coastline_within(coastline, lons, lats):
     """Return the points of *coastline* that fall on the swath *lons* and *lats* describe.
 
     A coastline database spans the globe and a pass sees a sliver of it. A point
     the swath never covered has no profile to read: sampling one would return
     whatever sits at the edge of the array and report it as a shore.
+
+    Points far from the pass are dropped first by a cone drawn around it, which is
+    only an optimisation: the cone is grown by the widest gap between neighbouring
+    samples, so it cannot exclude anything the test below would have kept. It
+    matters because the test below searches the whole swath for each point it is
+    given, and a global coastline holds far more points than a pass can see.
 
     Nearness decides it, not a box drawn round the swath: a pass is a band across
     the globe, so that box holds large corners it never imaged. Nor an array index:
@@ -121,8 +203,12 @@ def coastline_within(coastline, lons, lats):
     at the last sample of a row there is nothing further out and a reach measured
     against the sample itself would be zero, refusing the whole trailing edge.
     """
+    middle, spread = _cone_around(lons, lats)
+    reach = np.radians(_widest_gap(lons, lats))
     inside = []
     for point in coastline:
+        if _angle_from(middle, point) > spread + reach:
+            continue
         line, column = swath_pixel_of(lons, lats, point)
         beside = column + 1 if column + 1 < lons.shape[1] else column - 1
         here = (lons[line, column], lats[line, column])
@@ -206,8 +292,10 @@ def measure_against_reference(swath, swath_lons, swath_lats,
     centre. The geometry comes from the caller -- the slant range and the local
     zenith angle the pass already carries -- rather than being derived here.
 
-    A crossing the swath failed to resolve is passed over here as well as in the
-    difference, so that every miss keeps the geometry of the crossing it came from.
+    A crossing that either image failed to resolve is passed over here as well as in
+    the difference, so that every miss keeps the geometry of the crossing it came
+    from. The reference fails as readily as the swath: it is masked and mosaicked,
+    and a coast the pass sees plainly can be unreadable there.
     Without that, one miss meets two geometries and is quietly divided by both,
     reporting a measurement at a scan angle where nothing was measured.
     """
@@ -225,6 +313,9 @@ def measure_against_reference(swath, swath_lons, swath_lats,
     for start, end in zip(covered, covered[1:]):
         if not np.isfinite(shoreline_offset(swath, swath_lons, swath_lats, (start, end),
                                             reach, least_prominence)):
+            continue
+        if not np.isfinite(shoreline_offset(reference, reference_lons, reference_lats,
+                                            (start, end), reach, least_prominence)):
             continue
         entering = swath_pixel_of(swath_lons, swath_lats, start)
         leaving = swath_pixel_of(swath_lons, swath_lats, end)

@@ -27,6 +27,7 @@ dependencies = [
     "pyorbital>1.10.0",
     "numba>=0.61.2",
     "python-geotiepoints>=1.7.5",
+    "pyshp>=2.3.0",
 ]
 
 [project.optional-dependencies]

@@ -212,3 +212,25 @@ def test_a_coast_running_obliquely_is_judged_against_a_width_between_the_two():
     from georeferencer.georeferencer import footprint_towards
 
     assert footprint_towards(np.pi / 4, 3.0, 4.0) == approx(5.0 / np.sqrt(2.0))
+
+
+def test_a_coastline_is_read_from_a_shapefile(tmp_path):
+    """GSHHG ships as shapefiles, which pyshp already reads.
+
+    The coastline arrives as one or more sequences of points. Nothing here parses
+    the format: that is a solved problem and reimplementing it would be a second
+    reader to keep correct.
+    """
+    import shapefile
+
+    from georeferencer.shoreline import coastline_from
+
+    path = tmp_path / "coast.shp"
+    with shapefile.Writer(str(path)) as writing:
+        writing.field("id", "N")
+        writing.line([[(0.0, 0.0), (1.0, 1.0), (2.0, 2.0)]])
+        writing.record(1)
+
+    read = coastline_from(str(path))
+
+    assert read == [[(0.0, 0.0), (1.0, 1.0), (2.0, 2.0)]]

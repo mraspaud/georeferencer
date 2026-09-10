@@ -31,6 +31,21 @@ def profile_along(image, at, direction, reach):
     return map_coordinates(image, [rows, columns], order=1, mode="nearest")
 
 
+def coastline_from(path):
+    """Return the coastline in the shapefile at *path*, as sequences of lon/lat points.
+
+    GSHHG is distributed as shapefiles, and reading that format is a solved problem:
+    this hands it to pyshp rather than keeping a second reader of its own to get
+    wrong. pycoast reads the same data but only to draw it, and its geometry is not
+    part of its public surface.
+    """
+    import shapefile
+
+    with shapefile.Reader(path) as reading:
+        return [[(float(lon), float(lat)) for lon, lat in shape.points]
+                for shape in reading.shapes()]
+
+
 def _degrees_apart(one, other):
     """Return how far apart two lon/lat points lie, in degrees, allowing for the meridian.
 

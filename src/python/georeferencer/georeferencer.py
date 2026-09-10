@@ -9,6 +9,7 @@ import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+from typing import NamedTuple
 
 import dask.array as da
 import geotiepoints as gtp
@@ -324,6 +325,42 @@ def footprint_sizes(slant_range, local_zenith, field_of_view):
     """
     along = field_of_view * slant_range
     return along, along / np.cos(local_zenith)
+
+
+class PixelFractions(NamedTuple):
+    """A miss expressed against both the sample spacing and the footprint."""
+
+    of_spacing: np.ndarray
+    of_footprint: np.ndarray
+
+
+def as_pixel_fractions(miss, spacing, footprint):
+    """Express *miss* as a fraction of a sample step and of a footprint.
+
+    Both are given because they are not interchangeable and the difference between
+    them is not a constant: across track the two grow together, but along track the
+    spacing barely changes while the footprint roughly doubles towards the swath
+    edge. A figure quoted against one and read as the other is wrong by a factor
+    that depends on where in the swath it was measured.
+    """
+    return PixelFractions(np.asarray(miss) / np.asarray(spacing),
+                          np.asarray(miss) / np.asarray(footprint))
+
+
+def summarise_misses(misses):
+    """Return how far *misses* sit off centre, and how widely they scatter.
+
+    These answer different questions and are reported separately. The offset is
+    where the navigation systematically puts things, and it is a signed median, so
+    misses that fall as often one way as the other cancel. The scatter is how much
+    the individual measurements disagree with each other, and it says nothing about
+    whether they are centred.
+
+    Collapsing the two -- by taking the size of a typical miss regardless of its
+    sign -- would report scatter as though it were bias, and would condemn a
+    perfectly centred navigation for being imprecise.
+    """
+    return float(np.median(misses)), float(np.std(misses))
 
 
 def _clear_of_the_wrapped_seam(points, shape, steps):

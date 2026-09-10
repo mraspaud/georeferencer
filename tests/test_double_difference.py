@@ -35,3 +35,38 @@ def test_a_footprint_stretches_across_track_when_the_ground_tilts_away():
 
     assert along == approx(1.0)
     assert across == approx(2.0)
+
+
+def test_misses_that_scatter_evenly_report_no_systematic_offset():
+    """Accuracy and precision are different numbers and must not be collapsed.
+
+    A set of misses that lands as often one way as the other has no systematic
+    offset, however far it scatters. Summarising it by the size of a typical miss
+    instead -- the median of the absolute values -- would report the scatter as
+    though it were a bias, and would say a perfectly centred navigation was off by
+    a whole pixel.
+    """
+    from georeferencer.georeferencer import summarise_misses
+
+    offset, scatter = summarise_misses(np.array([-1.0, 1.0, -1.0, 1.0]))
+
+    assert offset == approx(0.0)
+    assert scatter == approx(1.0)
+
+
+def test_a_miss_is_reported_against_both_the_spacing_and_the_footprint():
+    """The same miss is a different fraction of a sample step than of a footprint.
+
+    Away from nadir the footprint is the larger of the two, so the same miss is a
+    smaller fraction of it. Both are reported because they are not interchangeable
+    and because earlier figures for this record were quoted against the spacing:
+    showing them side by side is what makes the two comparable instead of silently
+    swapped.
+    """
+    from georeferencer.georeferencer import as_pixel_fractions
+
+    fractions = as_pixel_fractions(miss=np.array([550.0]), spacing=np.array([1100.0]),
+                                   footprint=np.array([2200.0]))
+
+    assert fractions.of_spacing == approx([0.5])
+    assert fractions.of_footprint == approx([0.25])

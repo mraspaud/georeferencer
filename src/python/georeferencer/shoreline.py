@@ -77,13 +77,15 @@ def coast_normal(start, end):
 
 
 def direction_from_track(step):
-    """Return the angle from the along-track axis of a step that runs along it: zero.
+    """Return the angle of *step* from the along-track axis, in radians.
 
-    Only that case is settled. A step is given in lines and columns, and a line
-    runs along the track, so a step down the lines is at no angle to it. What a
-    step in any other direction should give is not decided here yet.
+    A step is given in lines and columns: a line runs along the track and a column
+    across it, so a step down the lines is at no angle to the track, a step along
+    the columns is at a right angle to it, and one stepped equally in both lies
+    halfway between. Real coasts run at every angle and the axis cases are the rare
+    ones, so what happens between them decides most measurements.
     """
-    return 0.0
+    return float(np.arctan2(step[1], step[0]))
 
 
 def ground_step(lons, lats, at, direction):

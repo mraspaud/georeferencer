@@ -272,3 +272,29 @@ def test_the_angle_a_crossing_was_measured_at_is_read_off_the_swath_axes():
     from georeferencer.shoreline import direction_from_track
 
     assert direction_from_track(np.array([1.0, 0.0])) == approx(0.0)
+
+
+def test_a_crossing_stepped_across_the_columns_was_measured_across_the_track():
+    """A column runs across the track, so a step along the columns is at a right angle.
+
+    With the along-track case already settled at zero, this is the second of the two
+    the footprint has to distinguish: the narrow side of the pixel faces along the
+    track and the wide side across it, so a crossing measured this way is judged
+    against the wide side.
+    """
+    from georeferencer.shoreline import direction_from_track
+
+    assert direction_from_track(np.array([0.0, 1.0])) == approx(np.pi / 2)
+
+
+def test_a_coast_running_diagonally_is_measured_at_a_diagonal_angle():
+    """Real coastlines run at every angle, and the two axis cases are the rare ones.
+
+    A crossing stepped equally in lines and columns lies halfway between along and
+    across, and the footprint it should be judged against lies between the narrow
+    and the wide side. Deciding only the two axis cases would send every oblique
+    crossing -- which is most of them -- to one extreme or the other.
+    """
+    from georeferencer.shoreline import direction_from_track
+
+    assert direction_from_track(np.array([1.0, 1.0])) == approx(np.pi / 4)

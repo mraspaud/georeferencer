@@ -186,3 +186,38 @@ def shoreline_double_difference(swath, swath_lons, swath_lats,
                                         reach, least_prominence) for segment in segments])
     both = np.isfinite(ours) & np.isfinite(theirs)
     return ours[both] - theirs[both]
+
+def measure_against_reference(swath, swath_lons, swath_lats,
+                              reference, reference_lons, reference_lats,
+                              coastline, reach, least_prominence,
+                              along_footprint, across_footprint):
+    """Return how far the swath sits from the reference, per crossing, in pixels.
+
+    The whole measurement: cut the coastline to what the pass covered, measure the
+    shore on both images against it, difference the two so the coastline's own error
+    cancels, and express each crossing as a fraction of the pixel it was measured
+    against -- both of the sample spacing and of the footprint, since the two differ
+    and earlier figures for this record were quoted against the spacing.
+
+    Each crossing is judged against the footprint width in the direction that
+    crossing was measured, because a coast runs where geography puts it and the
+    footprint is several times wider across the track than along it.
+    """
+    from georeferencer.georeferencer import as_pixel_fractions, footprint_towards
+
+    covered = coastline_within(coastline, swath_lons, swath_lats)
+    misses = shoreline_double_difference(swath, swath_lons, swath_lats,
+                                         reference, reference_lons, reference_lats,
+                                         covered, reach, least_prominence)
+    segments = list(zip(covered, covered[1:]))
+    spacings, footprints = [], []
+    for segment in segments:
+        start, end = segment
+        entering = swath_pixel_of(swath_lons, swath_lats, start)
+        leaving = swath_pixel_of(swath_lons, swath_lats, end)
+        normal = coast_normal(entering, leaving)
+        crossing = np.mean([entering, leaving], axis=0)
+        spacings.append(ground_step(swath_lons, swath_lats, crossing, normal))
+        footprints.append(footprint_towards(direction_from_track(normal),
+                                            along_footprint, across_footprint))
+    return as_pixel_fractions(misses, np.array(spacings), np.array(footprints))

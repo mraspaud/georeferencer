@@ -298,3 +298,27 @@ def test_a_coast_running_diagonally_is_measured_at_a_diagonal_angle():
     from georeferencer.shoreline import direction_from_track
 
     assert direction_from_track(np.array([1.0, 1.0])) == approx(np.pi / 4)
+
+
+def test_a_pass_is_measured_against_the_reference_crossing_by_crossing():
+    """The whole measurement, end to end, on one pass.
+
+    The swath places the shore two samples further out than the reference does,
+    along a coast that runs across the track. Everything the coastline itself
+    contributes cancels, so what is reported is that disagreement and nothing else.
+    """
+    from georeferencer.shoreline import measure_against_reference
+
+    shore_at_five = [0., 0., 0., 0., 0., 1., 1., 1., 1., 1.]
+    shore_at_seven = [0., 0., 0., 0., 0., 0., 0., 1., 1., 1.]
+    swath = np.tile(shore_at_seven, (5, 1))
+    reference = np.tile(shore_at_five, (5, 1))
+    lons = np.tile(np.arange(10.), (5, 1))
+    lats = np.tile(np.array([[2.], [1.], [0.], [-1.], [-2.]]), (1, 10))
+    coastline = [(4., 1.), (4., -1.)]
+
+    measured = measure_against_reference(
+        swath, lons, lats, reference, lons, lats, coastline,
+        reach=3, least_prominence=0.2, along_footprint=1100.0, across_footprint=5000.0)
+
+    assert len(measured.of_footprint) == 1

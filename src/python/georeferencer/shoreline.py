@@ -327,3 +327,19 @@ def measure_against_reference(swath, swath_lons, swath_lats,
                                         local_zenith[line, column], field_of_view)
         footprints.append(footprint_towards(direction_from_track(normal), along, across))
     return as_pixel_fractions(misses, np.array(spacings), np.array(footprints))
+
+def displacement_from(readings, normals):
+    """Return the displacement, along track and across, that *readings* imply.
+
+    Each reading is how far the shore moved measured across its own coast, which is
+    one component of a two-component displacement -- the part along that coast is
+    not measured at all. Solved together, crossings that bend away from each other
+    fix both directions.
+
+    They must be solved rather than averaged. Coastlines hold the same bearing over
+    whole regions, so the directions a pass happens to sample are not spread evenly,
+    and the mean of the readings leans towards whichever way the coast runs instead
+    of cancelling.
+    """
+    return tuple(np.linalg.lstsq(np.asarray(normals, dtype=float),
+                                 np.asarray(readings, dtype=float), rcond=None)[0])

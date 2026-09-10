@@ -427,3 +427,23 @@ def test_a_crossing_the_reference_cannot_resolve_is_dropped_too():
         slant_range=np.full((5, 10), 833_000.0), local_zenith=np.zeros((5, 10)))
 
     assert len(measured.of_footprint) == 1
+
+
+def test_two_crossings_at_a_right_angle_fix_a_displacement_both_ways():
+    """Each crossing measures across its own coast, and nothing along it.
+
+    A profile pins the shore only in the direction it was read, so one crossing
+    leaves the displacement free along the coast. Crossings that bend away from each
+    other pin both directions between them. This matters more than it sounds:
+    coastlines run the same way over whole regions, so averaging the readings
+    themselves does not cancel the missing direction, it bends the answer towards
+    whichever way the coast happens to lie.
+    """
+    from georeferencer.shoreline import displacement_from
+
+    normals = np.array([[1.0, 0.0], [0.0, 1.0]])
+    readings = np.array([3.0, 4.0])
+
+    along, across = displacement_from(readings, normals)
+
+    assert (along, across) == approx((3.0, 4.0))

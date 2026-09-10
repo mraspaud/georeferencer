@@ -257,3 +257,18 @@ def test_a_point_nearest_the_last_sample_of_a_swath_is_still_covered():
     covered = coastline_within([just_past_the_line], lons, lats)
 
     assert covered == [just_past_the_line]
+
+
+def test_the_angle_a_crossing_was_measured_at_is_read_off_the_swath_axes():
+    """Crossings are stepped in pixels, and a pixel step is already in track axes.
+
+    The coast normal comes back as a step in lines and columns, and a line is along
+    the track while a column is across it. So the angle the footprint has to be
+    taken at is simply the angle of that step, with no frame to convert between.
+
+    A crossing stepped purely down the lines was measured along the track, and the
+    angle from that axis is zero.
+    """
+    from georeferencer.shoreline import direction_from_track
+
+    assert direction_from_track(np.array([1.0, 0.0])) == approx(0.0)

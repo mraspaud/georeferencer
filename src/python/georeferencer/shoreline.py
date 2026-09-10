@@ -76,6 +76,16 @@ def coast_normal(start, end):
     return across / np.hypot(*across)
 
 
+def direction_from_track(step):
+    """Return the angle from the along-track axis of a step that runs along it: zero.
+
+    Only that case is settled. A step is given in lines and columns, and a line
+    runs along the track, so a step down the lines is at no angle to it. What a
+    step in any other direction should give is not decided here yet.
+    """
+    return 0.0
+
+
 def ground_step(lons, lats, at, direction):
     """Return how far across the ground one step along *direction* carries, in metres."""
     _, here_east, beyond_east = profile_along(lons, at, direction, reach=1)

@@ -81,15 +81,17 @@ def get_variance_array(matrix, step=8, box_size=48):
     """
     window_size = (box_size, box_size)
     height, width = matrix.shape
-    variance_array = np.zeros(((height - box_size) // step + 1, (width - box_size) // step + 1), dtype=np.float32)
 
     win_mean = ndimage.uniform_filter(matrix, window_size)
     win_sqr_mean = ndimage.uniform_filter(matrix**2, window_size)
     variance = win_sqr_mean - win_mean**2
 
-    for i in range(0, height - box_size + 1, step):
-        for j in range(0, width - box_size + 1, step):
-            variance_array[i // step, j // step] = variance[i + box_size // 2][j + box_size // 2]
+    variance_array = np.zeros(((height - box_size) // step + 1, (width - box_size) // step + 1),
+                              dtype=np.float32)
+    # every step-th window centre
+    middle = box_size // 2
+    variance_array[:] = variance[middle:height - box_size + 1 + middle:step,
+                                 middle:width - box_size + 1 + middle:step]
     return variance_array
 
 

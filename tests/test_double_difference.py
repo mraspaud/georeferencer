@@ -70,3 +70,56 @@ def test_a_miss_is_reported_against_both_the_spacing_and_the_footprint():
 
     assert fractions.of_spacing == approx([0.5])
     assert fractions.of_footprint == approx([0.25])
+
+
+def test_a_crossing_only_one_image_resolves_is_dropped_from_both():
+    """The two terms only cancel if they are measured on the very same crossings.
+
+    Cloud sits over the second crossing in the swath but not in the reference. If
+    the reference's measurement of it were kept, it would enter the difference with
+    nothing to cancel against, and the coastline's own error -- the very thing this
+    construction exists to remove -- would come back in on that crossing alone.
+    """
+    from georeferencer.shoreline import shoreline_double_difference
+
+    shore = [0., 0., 0., 0., 0., 1., 1., 1., 1., 1.]
+    further = [0., 0., 0., 0., 0., 0., 0., 1., 1., 1.]
+    cloud = [0.8] * 10
+    swath = np.array([shore, shore, shore, cloud, cloud])
+    reference = np.array([shore, shore, shore, further, further])
+    lons = np.tile(np.arange(10.), (5, 1))
+    lats = np.tile(np.array([[2.], [1.], [0.], [-1.], [-2.]]), (1, 10))
+    coastline = [(4., 2.), (4., 0.), (4., -2.)]
+
+    differences = shoreline_double_difference(
+        swath, lons, lats, reference, lons, lats, coastline,
+        reach=3, least_prominence=0.2)
+
+    assert len(differences) == 1
+
+
+def test_where_the_coastline_puts_the_shore_does_not_reach_the_answer():
+    """The coastline is a common reference, so its own error leaves no trace.
+
+    The same two images are measured against two coastlines that disagree with each
+    other about where the shore is. Each disagreement moves both terms by the same
+    amount, so the difference between them is untouched. That is the whole reason
+    for measuring twice: the coastline may be wrong, and it does not matter.
+    """
+    from georeferencer.shoreline import shoreline_double_difference
+
+    at_five = [0., 0., 0., 0., 0., 1., 1., 1., 1., 1.]
+    at_seven = [0., 0., 0., 0., 0., 0., 0., 1., 1., 1.]
+    swath = np.tile(at_five, (5, 1))
+    reference = np.tile(at_seven, (5, 1))
+    lons = np.tile(np.arange(10.), (5, 1))
+    lats = np.tile(np.array([[2.], [1.], [0.], [-1.], [-2.]]), (1, 10))
+
+    one_coastline = shoreline_double_difference(
+        swath, lons, lats, reference, lons, lats, [(4., 1.), (4., -1.)],
+        reach=3, least_prominence=0.2)
+    another_coastline = shoreline_double_difference(
+        swath, lons, lats, reference, lons, lats, [(6., 1.), (6., -1.)],
+        reach=3, least_prominence=0.2)
+
+    np.testing.assert_allclose(one_coastline, another_coastline, rtol=1e-9)

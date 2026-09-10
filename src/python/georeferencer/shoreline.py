@@ -94,3 +94,27 @@ def shoreline_offsets(image, lons, lats, coastline, reach, least_prominence):
     measured = np.array([shoreline_offset(image, lons, lats, segment, reach, least_prominence)
                          for segment in segments])
     return measured[np.isfinite(measured)]
+
+
+def shoreline_double_difference(swath, swath_lons, swath_lats,
+                                reference, reference_lons, reference_lats,
+                                coastline, reach, least_prominence):
+    """Return how far the swath places the shore relative to the reference, per crossing.
+
+    Each crossing is measured twice against the same piece of coastline: once on
+    the swath, once on the reference. The coastline's own error -- how it defines a
+    shore, tides, its own accuracy -- is identical in the two and subtracts out, so
+    what remains is the swath against the reference alone, free of a disagreement
+    that is otherwise the same size as the whole requirement.
+
+    A crossing that only one of the two resolves is dropped from both. Keeping it
+    would let it enter the difference with nothing to cancel against, and bring
+    back on that crossing exactly the error this construction removes.
+    """
+    segments = list(zip(coastline, coastline[1:]))
+    ours = np.array([shoreline_offset(swath, swath_lons, swath_lats, segment,
+                                      reach, least_prominence) for segment in segments])
+    theirs = np.array([shoreline_offset(reference, reference_lons, reference_lats, segment,
+                                        reach, least_prominence) for segment in segments])
+    both = np.isfinite(ours) & np.isfinite(theirs)
+    return ours[both] - theirs[both]

@@ -202,6 +202,11 @@ def measure_against_reference(swath, swath_lons, swath_lats,
     Each crossing is judged against the footprint width in the direction that
     crossing was measured, because a coast runs where geography puts it and the
     footprint is several times wider across the track than along it.
+
+    A crossing the swath failed to resolve is passed over here as well as in the
+    difference, so that every miss keeps the geometry of the crossing it came from.
+    Without that, one miss meets two geometries and is quietly divided by both,
+    reporting a measurement at a scan angle where nothing was measured.
     """
     from georeferencer.georeferencer import as_pixel_fractions, footprint_towards
 
@@ -209,10 +214,11 @@ def measure_against_reference(swath, swath_lons, swath_lats,
     misses = shoreline_double_difference(swath, swath_lons, swath_lats,
                                          reference, reference_lons, reference_lats,
                                          covered, reach, least_prominence)
-    segments = list(zip(covered, covered[1:]))
     spacings, footprints = [], []
-    for segment in segments:
-        start, end = segment
+    for start, end in zip(covered, covered[1:]):
+        if not np.isfinite(shoreline_offset(swath, swath_lons, swath_lats, (start, end),
+                                            reach, least_prominence)):
+            continue
         entering = swath_pixel_of(swath_lons, swath_lats, start)
         leaving = swath_pixel_of(swath_lons, swath_lats, end)
         normal = coast_normal(entering, leaving)

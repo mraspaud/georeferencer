@@ -322,3 +322,30 @@ def test_a_pass_is_measured_against_the_reference_crossing_by_crossing():
         reach=3, least_prominence=0.2, along_footprint=1100.0, across_footprint=5000.0)
 
     assert len(measured.of_footprint) == 1
+
+
+def test_a_crossing_dropped_from_one_image_takes_its_geometry_with_it():
+    """Each miss must keep the geometry of the crossing it came from.
+
+    Cloud hides the first crossing in the swath, so only the second is measured.
+    The two crossings sit at different scan angles and so are judged against
+    different pixel widths. Pairing the surviving miss with the first crossing's
+    geometry would divide it by a width belonging to a place it was not measured,
+    and across track those widths differ several-fold.
+    """
+    from georeferencer.shoreline import measure_against_reference
+
+    shore = [0., 0., 0., 0., 0., 1., 1., 1., 1., 1.]
+    further = [0., 0., 0., 0., 0., 0., 0., 1., 1., 1.]
+    cloud = [0.8] * 10
+    swath = np.array([cloud, cloud, further, further, further])
+    reference = np.array([shore, shore, shore, shore, shore])
+    lons = np.tile(np.arange(10.), (5, 1))
+    lats = np.tile(np.array([[2.], [1.], [0.], [-1.], [-2.]]), (1, 10))
+    coastline = [(4., 2.), (4., 0.), (4., -2.)]
+
+    measured = measure_against_reference(
+        swath, lons, lats, reference, lons, lats, coastline,
+        reach=3, least_prominence=0.2, along_footprint=1100.0, across_footprint=5000.0)
+
+    assert len(measured.of_footprint) == 1

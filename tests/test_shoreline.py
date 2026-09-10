@@ -5,6 +5,8 @@ from pytest import approx
 
 from georeferencer.shoreline import (
     coast_normal,
+    displacement_from,
+    measure_against_reference,
     crosses_a_coast,
     ground_step,
     offset_to_shoreline,
@@ -181,3 +183,34 @@ def test_a_shore_found_at_the_start_of_a_profile_is_placed_from_its_own_neighbou
     profile = np.array([0.0, 1.0, 1.2, 1.7])
 
     assert offset_to_shoreline(profile) == approx(-1.0)
+
+
+def test_the_crossings_of_a_pass_solve_back_into_its_displacement():
+    """A coast that turns a corner pins both directions, and the solve recovers the shift.
+
+    Each crossing measures only the part of the displacement that lies across its own
+    coast, so no single crossing sees the whole of it. Here the land lies east of one
+    stretch of coast and south of another, at right angles to it, and the swath places
+    that land one sample east of where the reference does. The east-facing stretch sees
+    the whole of that shift; the south-facing one sees none of it, because sliding a
+    coast along itself moves nothing.
+
+    Read together they fix both directions, which is why the readings are solved rather
+    than averaged: a median of readings taken across coasts that run different ways is
+    not the displacement, and where a region's coasts share a bearing it is not even
+    close.
+    """
+    rows, columns = np.mgrid[0:9, 0:10]
+    reference = np.where((columns >= 5) | (rows >= 5), 1.0, 0.0)
+    swath = np.where((columns >= 6) | (rows >= 5), 1.0, 0.0)
+    lons = np.tile(np.arange(10.), (9, 1))
+    lats = np.tile(np.arange(4., -5., -1.).reshape(-1, 1), (1, 10))
+    coastline = [(4.4, 4.0), (4.4, -0.4), (0.4, -0.4)]
+
+    measured = measure_against_reference(
+        swath, lons, lats, reference, lons, lats, coastline,
+        reach=3, least_prominence=0.2, field_of_view=1.3e-3,
+        slant_range=np.full(swath.shape, 850e3), local_zenith=np.zeros(swath.shape))
+
+    along, across = displacement_from(measured.of_spacing, measured.normals)
+    np.testing.assert_allclose((along, across), (0.0, 1.0), atol=0.05)

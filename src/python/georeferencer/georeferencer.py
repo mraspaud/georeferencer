@@ -328,13 +328,19 @@ def footprint_sizes(slant_range, local_zenith, field_of_view):
 
 
 class PixelFractions(NamedTuple):
-    """A miss expressed against both the sample spacing and the footprint."""
+    """A miss expressed against both the sample spacing and the footprint.
+
+    The direction each miss was measured in is carried alongside it, because a miss
+    on its own is only one component of a displacement and cannot be aggregated
+    without knowing which way it points.
+    """
 
     of_spacing: np.ndarray
     of_footprint: np.ndarray
+    normals: np.ndarray | None = None
 
 
-def as_pixel_fractions(miss, spacing, footprint):
+def as_pixel_fractions(miss, spacing, footprint, normals=None):
     """Express *miss* as a fraction of a sample step and of a footprint.
 
     Both are given because they are not interchangeable and the difference between
@@ -344,7 +350,8 @@ def as_pixel_fractions(miss, spacing, footprint):
     that depends on where in the swath it was measured.
     """
     return PixelFractions(np.asarray(miss) / np.asarray(spacing),
-                          np.asarray(miss) / np.asarray(footprint))
+                          np.asarray(miss) / np.asarray(footprint),
+                          None if normals is None else np.asarray(normals))
 
 
 def footprint_towards(direction, along, across):

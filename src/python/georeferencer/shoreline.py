@@ -326,18 +326,20 @@ def measure_against_reference(swath, swath_lons, swath_lats,
     resolved, misses = _crossings_resolved_in_both(
         swath, swath_lons, swath_lats, reference, reference_lons, reference_lats,
         covered, reach, least_prominence)
-    spacings, footprints = [], []
+    spacings, footprints, normals = [], [], []
     for start, end in resolved:
         entering = swath_pixel_of(swath_lons, swath_lats, start)
         leaving = swath_pixel_of(swath_lons, swath_lats, end)
         normal = coast_normal(entering, leaving)
         crossing = np.mean([entering, leaving], axis=0)
         spacings.append(ground_step(swath_lons, swath_lats, crossing, normal))
+        normals.append(normal)
         line, column = int(round(crossing[0])), int(round(crossing[1]))
         along, across = footprint_sizes(slant_range[line, column],
                                         local_zenith[line, column], field_of_view)
         footprints.append(footprint_towards(direction_from_track(normal), along, across))
-    return as_pixel_fractions(misses, np.array(spacings), np.array(footprints))
+    return as_pixel_fractions(misses, np.array(spacings), np.array(footprints),
+                              np.array(normals))
 
 def displacement_from(readings, normals):
     """Return the displacement, along track and across, that *readings* imply.

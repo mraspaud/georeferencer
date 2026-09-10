@@ -95,6 +95,34 @@ def get_variance_array(matrix, step=8, box_size=48):
     return variance_array
 
 
+def variance_on_reduced_grid(matrix, step=8, box_size=48):
+    """Return the same variances as :func:`get_variance_array`, off a reduced grid.
+
+    A wide window's mean is the mean of the block means beneath it, and the same holds
+    for the mean of squares, so the variance the wide window sees can be had from a
+    narrow window on a reduction. Only one value in step**2 is kept, so computing the
+    filters at full resolution is most of the work.
+
+    The grids line up when the sampling stride is the block size and the box is a whole
+    multiple of it.
+    """
+    height, width = matrix.shape
+    down, across = height // step, width // step
+    blocks = box_size // step
+
+    in_blocks = matrix[:down * step, :across * step].reshape(down, step, across, step)
+    mean = in_blocks.mean(axis=(1, 3))
+    mean_of_squares = (in_blocks ** 2).mean(axis=(1, 3))
+    variance = (ndimage.uniform_filter(mean_of_squares, blocks)
+                - ndimage.uniform_filter(mean, blocks) ** 2)
+
+    centre_of_the_first_window = blocks // 2
+    return variance[centre_of_the_first_window:
+                    centre_of_the_first_window + (height - box_size) // step + 1,
+                    centre_of_the_first_window:
+                    centre_of_the_first_window + (width - box_size) // step + 1]
+
+
 def get_gcp_candidates(variance_array, group_size=3):
     """Generates a list of potential ground control points.
 

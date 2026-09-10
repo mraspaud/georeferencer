@@ -265,3 +265,22 @@ def test_thin_gcp_candidates_large_group_size():
     result = gcp_gen.thin_gcp_candidates(variance_array, gcp_candidates, group_size=5)
 
     assert result == [(0, 0), (3, 1)]
+
+
+def test_variance_is_the_same_taken_on_the_reduced_grid():
+    """Averaging in blocks first gives the same variance, on a sixty-fourth of the data.
+
+    A 48-wide window mean is the mean of thirty-six 8-wide blocks, and the same holds
+    for the mean of squares, so the variance a 48-wide window sees can be had from a
+    6-wide window on an eight-fold reduction. The window centres line up because the
+    sampling stride is the block size. It is the full-resolution filters that cost:
+    two of them over the whole reference, to keep one value in sixty-four.
+    """
+    rng = np.random.default_rng(20260910)
+    ground = rng.random((256, 320), dtype=np.float32)
+
+    whole = gcp_gen.get_variance_array(ground, step=8, box_size=48)
+    reduced = gcp_gen.variance_on_reduced_grid(ground, step=8, box_size=48)
+
+    assert reduced.shape == whole.shape
+    np.testing.assert_allclose(reduced, whole, rtol=2e-3, atol=2e-5)

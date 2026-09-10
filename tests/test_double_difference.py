@@ -181,3 +181,34 @@ def test_a_point_between_the_samples_of_a_coarse_swath_is_still_covered():
     covered = coastline_within([between_two_samples], lons, lats)
 
     assert covered == [between_two_samples]
+
+
+def test_the_footprint_a_miss_is_judged_against_follows_the_direction_it_was_measured():
+    """A crossing is measured across the coast, which points wherever the coast runs.
+
+    The footprint is not round: it is much wider across the track than along it. A
+    miss measured across the track must be judged against the wide side and one
+    measured along the track against the narrow side, or the same error reads as
+    two different fractions of a pixel depending only on how the coastline happened
+    to lie.
+    """
+    from georeferencer.georeferencer import footprint_towards
+
+    along, across = 1100.0, 5000.0
+
+    assert footprint_towards(0.0, along, across) == approx(along)
+    assert footprint_towards(np.pi / 2, along, across) == approx(across)
+
+
+def test_a_coast_running_obliquely_is_judged_against_a_width_between_the_two():
+    """Most coasts run neither along the track nor across it.
+
+    The footprint is an ellipse, so its width in an oblique direction is the
+    quadrature combination of the two axis widths, not their average. With a
+    three-by-four footprint measured at forty-five degrees that is five over root
+    two, which a straight average would put at three and a half -- a one per cent
+    error on every oblique crossing, and most crossings are oblique.
+    """
+    from georeferencer.georeferencer import footprint_towards
+
+    assert footprint_towards(np.pi / 4, 3.0, 4.0) == approx(5.0 / np.sqrt(2.0))

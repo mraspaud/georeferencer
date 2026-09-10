@@ -347,6 +347,29 @@ def as_pixel_fractions(miss, spacing, footprint):
                           np.asarray(miss) / np.asarray(footprint))
 
 
+def footprint_towards(direction, along, across):
+    """Return how wide the footprint is in *direction*, measured from the track.
+
+    A footprint is not round: it is much wider across the track than along it, and
+    an error has to be judged against the width in the direction it was actually
+    measured. A shoreline crossing is measured across the coast, and the coast runs
+    wherever it runs, so that direction is set by geography rather than by the
+    instrument.
+
+    *direction* is an angle in radians from the along-track axis, so zero gives the
+    narrow side and a right angle the wide one. In between it combines the two in
+    quadrature, treating the footprint as an ellipse.
+
+    That shape is pinned at three directions -- along, across, and obliquely -- and
+    those three are enough to separate it from the alternatives worth considering:
+    a straight average of the two widths and an L1 combination both miss the
+    oblique case by more than a per cent. It is believed rather than proven for the
+    directions in between, and a per-cent error there would be paid on most
+    crossings, because most coasts run obliquely.
+    """
+    return float(np.hypot(along * np.cos(direction), across * np.sin(direction)))
+
+
 def summarise_misses(misses):
     """Return how far *misses* sit off centre, and how widely they scatter.
 

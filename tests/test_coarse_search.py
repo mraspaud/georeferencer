@@ -95,17 +95,3 @@ def test_the_coarse_shift_is_reported_so_the_fit_can_start_from_it():
     assert carried[0] == approx(-80, abs=FINE_SEARCH_RADIUS)
 
 
-def test_a_shift_along_the_track_is_expressed_in_seconds():
-    """Scanlines arrive at a fixed rate, so a count of them can be written as a duration.
-
-    That is a change of units and nothing more. A swath sitting along its own track
-    may be doing so because its clock is wrong, because the elements it was navigated
-    from put it in the wrong place, or because the platform is pitched, and this
-    number does not distinguish them.
-    """
-    from georeferencer.georeferencer import seconds_from_scanlines
-
-    six_per_second = np.timedelta64(166667, "us")
-    times = np.datetime64("1997-11-09T19:00:00") + np.arange(100) * six_per_second
-
-    assert seconds_from_scanlines(163, times) == approx(27.17, abs=0.01)

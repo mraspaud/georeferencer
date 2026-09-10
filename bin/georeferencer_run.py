@@ -22,5 +22,7 @@ parser.add_argument(
 args = parser.parse_args()
 
 logging.info("Finding displacement between %s and the reference image %s", args.filename, args.reference)
-displacement = gr.get_swath_displacement_with_filename(args.filename, args.tle_dir, args.tle_file, args.reference)
-logging.info("Result: %s", displacement)
+displacement = gr.measure_swath_displacement_with_filename(args.filename, args.tle_dir, args.tle_file, args.reference)
+gcps, gcp_lonlats, along_track_lines = displacement
+logging.info("Matched %d control points; the swath sits %d scan lines along its own track",
+             len(gcps), along_track_lines)

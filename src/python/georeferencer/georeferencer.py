@@ -16,7 +16,6 @@ import numpy as np
 import rioxarray
 import xarray as xr
 from numba import njit
-from pyorbital.geoloc_avhrr import estimate_time_and_attitude_deviations
 from pyproj import Geod
 from pyresample import gradient
 from pyresample.geometry import AreaDefinition, SwathDefinition
@@ -311,37 +310,6 @@ def estimate_gross_displacement(swath, reference, points, factor=8):
     return tuple(np.median(found, axis=0) * factor)
 
 
-def seconds_from_scanlines(lines, times):
-    """Return the along-track displacement of *lines* scan lines, expressed in seconds.
-
-    Scan lines arrive at a fixed rate, so a count of them can be written as a duration.
-    That is a change of units and nothing more: a swath sitting along its own track may
-    be doing so because its clock is wrong, because the orbit it was navigated from puts
-    it in the wrong place, or because the platform is pitched. All three displace it the
-    same way, and only the curvature across the swath tells them apart. Whether this
-    number is a clock error is the caller's judgement, not this package's.
-    """
-    seconds_per_line = np.diff(times).mean() / np.timedelta64(1, "s")
-    return float(lines * seconds_per_line)
-
-
-def fit_navigation(calibrated_ds, gcps, gcp_lonlats, solve_for_time,
-                   yaw_steering=False, nadir_convention=None, time_offset_guess=0.0):
-    """Fit a navigation to control points already found."""
-    return estimate_time_and_attitude_deviations(
-        gcps,
-        gcp_lonlats[:, 0],
-        gcp_lonlats[:, 1],
-        calibrated_ds["times"][0].values,
-        calibrated_ds.attrs["tle"],
-        calibrated_ds.attrs["max_scan_angle"],
-        yaw_steering=yaw_steering,
-        nadir_convention=nadir_convention,
-        time_offset_guess=time_offset_guess,
-        solve_for_time=solve_for_time,
-    )
-
-
 def _clear_of_the_wrapped_seam(points, shape, steps):
     """Say which *points* keep their matching window clear of the carried swath's far end.
 
@@ -419,9 +387,11 @@ def measure_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_
 
     Returns:
         tuple: The control points, the reference lon/lats they were matched to, and how far
-            along its own track the swath sits, in seconds, as
-            `(gcps, gcp_lonlats, along_track_seconds)`. What that displacement means for the
-            platform's clock is the caller's judgement, not this package's.
+            along its own track the swath sits, counted in scan lines, as
+            `(gcps, gcp_lonlats, along_track_lines)`. This package reports what it
+            measured and makes no claim about what the displacement means, nor about
+            how fast the lines arrived -- turning lines into a duration needs the scan
+            rate, which is the caller's knowledge.
 
     Raises:
         ValueError: If no valid displacement is found.
@@ -456,24 +426,9 @@ def measure_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_
     calibrated_ds["gcp_x_displacement"] = xr.DataArray(x_displacement, dims=["points"])
     calibrated_ds["gcp_y_displacement"] = xr.DataArray(y_displacement, dims=["points"])
 
-    along_track_seconds = seconds_from_scanlines(carried[0], calibrated_ds["times"].values)
-
     _translate_gcp_lines_to_scanline_offsets(calibrated_ds, gcps)
     logger.debug(f"Found {len(gcps)} valid gcps")
-    return gcps, valid_gcp_lonlats, along_track_seconds
-
-
-def get_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path, dem_path=None,
-                           yaw_steering=False, nadir_convention=None,
-                           solve_for_time=True):
-    """Measure a swath's displacement from a reference, and fit a navigation to it."""
-    gcps, gcp_lonlats, along_track_seconds = measure_swath_displacement(
-        calibrated_ds, sun_zen, sat_zen, reference_image_path, dem_path)
-    return fit_navigation(
-        calibrated_ds, gcps, gcp_lonlats, solve_for_time,
-        yaw_steering=yaw_steering, nadir_convention=nadir_convention,
-        time_offset_guess=along_track_seconds,
-    )
+    return gcps, valid_gcp_lonlats, carried[0]
 
 
 def _translate_gcp_lines_to_scanline_offsets(calibrated_ds, gcps):
@@ -485,11 +440,9 @@ def _translate_gcp_lines_to_scanline_offsets(calibrated_ds, gcps):
     gcps[:, 0] = calibrated_ds.scan_line_index.values[ints.astype(int)] - calibrated_ds.scan_line_index.values[0] + decs
 
 
-def get_swath_displacement_with_filename(swath_file, tle_dir, tle_file, reference_image_path, dem_path=None):
-    """Compute swath displacement using a satellite swath file and a reference image.
-
-    This function reads a swath file, retrieves the calibrated dataset,
-    and calculates displacement relative to the reference image.
+def measure_swath_displacement_with_filename(swath_file, tle_dir, tle_file, reference_image_path,
+                                             dem_path=None):
+    """Measure a swath's displacement from a reference image, given the swath's filename.
 
     Args:
         swath_file (str): Path to the swath data file.
@@ -499,7 +452,10 @@ def get_swath_displacement_with_filename(swath_file, tle_dir, tle_file, referenc
         dem_path (str): Path to the DEM GeoTIFF image.
 
     Returns:
-        tuple: Displacement values (dx, dy) between the swath and reference image.
+        tuple: The control points, the reference lon/lats they were matched to, and how far
+            along its own track the swath sits, counted in scan lines. What that
+            displacement means for the platform is the caller's judgement, not this
+            package's.
     """
     from pygac import get_reader_class
 
@@ -509,7 +465,7 @@ def get_swath_displacement_with_filename(swath_file, tle_dir, tle_file, referenc
     calibrated_ds = reader.get_calibrated_dataset()
     _, sat_zen, _, sun_zen, _ = reader.get_angles()
 
-    return get_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path, dem_path)
+    return measure_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path, dem_path)
 
 
 @njit(nogil=True)

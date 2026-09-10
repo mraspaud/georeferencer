@@ -190,7 +190,7 @@ def shoreline_double_difference(swath, swath_lons, swath_lats,
 def measure_against_reference(swath, swath_lons, swath_lats,
                               reference, reference_lons, reference_lats,
                               coastline, reach, least_prominence,
-                              along_footprint, across_footprint):
+                              field_of_view, slant_range, local_zenith):
     """Return how far the swath sits from the reference, per crossing, in pixels.
 
     The whole measurement: cut the coastline to what the pass covered, measure the
@@ -199,16 +199,23 @@ def measure_against_reference(swath, swath_lons, swath_lats,
     against -- both of the sample spacing and of the footprint, since the two differ
     and earlier figures for this record were quoted against the spacing.
 
-    Each crossing is judged against the footprint width in the direction that
-    crossing was measured, because a coast runs where geography puts it and the
-    footprint is several times wider across the track than along it.
+    Each crossing is judged against the footprint at its own place in the swath, in
+    the direction it was measured. The footprint is not one size for a pass: it
+    grows towards the edge of the scan, and it is wider across the track than along
+    it, so a single width for a whole pass would flatter the edges and punish the
+    centre. The geometry comes from the caller -- the slant range and the local
+    zenith angle the pass already carries -- rather than being derived here.
 
     A crossing the swath failed to resolve is passed over here as well as in the
     difference, so that every miss keeps the geometry of the crossing it came from.
     Without that, one miss meets two geometries and is quietly divided by both,
     reporting a measurement at a scan angle where nothing was measured.
     """
-    from georeferencer.georeferencer import as_pixel_fractions, footprint_towards
+    from georeferencer.georeferencer import (
+        as_pixel_fractions,
+        footprint_sizes,
+        footprint_towards,
+    )
 
     covered = coastline_within(coastline, swath_lons, swath_lats)
     misses = shoreline_double_difference(swath, swath_lons, swath_lats,
@@ -224,6 +231,8 @@ def measure_against_reference(swath, swath_lons, swath_lats,
         normal = coast_normal(entering, leaving)
         crossing = np.mean([entering, leaving], axis=0)
         spacings.append(ground_step(swath_lons, swath_lats, crossing, normal))
-        footprints.append(footprint_towards(direction_from_track(normal),
-                                            along_footprint, across_footprint))
+        line, column = int(round(crossing[0])), int(round(crossing[1]))
+        along, across = footprint_sizes(slant_range[line, column],
+                                        local_zenith[line, column], field_of_view)
+        footprints.append(footprint_towards(direction_from_track(normal), along, across))
     return as_pixel_fractions(misses, np.array(spacings), np.array(footprints))

@@ -319,7 +319,8 @@ def test_a_pass_is_measured_against_the_reference_crossing_by_crossing():
 
     measured = measure_against_reference(
         swath, lons, lats, reference, lons, lats, coastline,
-        reach=3, least_prominence=0.2, along_footprint=1100.0, across_footprint=5000.0)
+        reach=3, least_prominence=0.2, field_of_view=1.3e-3,
+        slant_range=np.full((5, 10), 833_000.0), local_zenith=np.zeros((5, 10)))
 
     assert len(measured.of_footprint) == 1
 
@@ -346,6 +347,35 @@ def test_a_crossing_dropped_from_one_image_takes_its_geometry_with_it():
 
     measured = measure_against_reference(
         swath, lons, lats, reference, lons, lats, coastline,
-        reach=3, least_prominence=0.2, along_footprint=1100.0, across_footprint=5000.0)
+        reach=3, least_prominence=0.2, field_of_view=1.3e-3,
+        slant_range=np.full((5, 10), 833_000.0), local_zenith=np.zeros((5, 10)))
 
     assert len(measured.of_footprint) == 1
+
+
+def test_a_crossing_far_out_on_the_scan_is_judged_against_a_wider_pixel():
+    """The footprint is not one size for a pass: it grows towards the swath edge.
+
+    The same miss in metres is a smaller fraction of a pixel where the pixel is
+    larger, and across track the pixel grows several-fold from nadir to the edge.
+    Judging every crossing against one width would flatter the edges and punish the
+    centre, on a swath whose control points are not evenly spread.
+    """
+    from georeferencer.shoreline import measure_against_reference
+
+    shore = [0., 0., 0., 0., 0., 1., 1., 1., 1., 1.]
+    further = [0., 0., 0., 0., 0., 0., 0., 1., 1., 1.]
+    swath = np.tile(further, (5, 1))
+    reference = np.tile(shore, (5, 1))
+    lons = np.tile(np.arange(10.), (5, 1))
+    lats = np.tile(np.array([[2.], [1.], [0.], [-1.], [-2.]]), (1, 10))
+    coastline = [(4., 1.), (4., -1.)]
+
+    def measured_at(zenith):
+        return measure_against_reference(
+            swath, lons, lats, reference, lons, lats, coastline,
+            reach=3, least_prominence=0.2, field_of_view=1.3e-3,
+            slant_range=np.full((5, 10), 833_000.0),
+            local_zenith=np.full((5, 10), zenith)).of_footprint[0]
+
+    assert measured_at(np.radians(60.0)) < measured_at(0.0)

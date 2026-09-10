@@ -156,6 +156,21 @@ def translate_gcp_to_swath_coordinates(gcp_array, calibrated_ds, geo_transform):
     return swath_cords, gcp_lonlats
 
 
+#: How much of the destination the resampler is given at a time, in samples each way.
+#: The destination is the largest thing in this calculation -- a LAC pass is a few
+#: thousand lines of 2048 samples -- and the resampler holds what it is handed. At
+#: 1024 a block is a few megabytes, which is large enough that dask's per-task cost
+#: disappears against the work and small enough that a whole pass is never live.
+DESTINATION_BLOCK = 1024
+
+
+def swath_in_blocks(lons, lats):
+    """Return the swath as a destination the resampler can take a piece at a time."""
+    return SwathDefinition(
+        lons=lons.chunk({dim: DESTINATION_BLOCK for dim in lons.dims}),
+        lats=lats.chunk({dim: DESTINATION_BLOCK for dim in lats.dims}))
+
+
 def reproject_reference_into_swath(
     matrix,
     swath_longitudes,

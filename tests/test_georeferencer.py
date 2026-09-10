@@ -105,3 +105,22 @@ def test_spike_interception():
 
         assert out_lat[j] == lat_sup[expected_idx]
         assert out_lon[j] == lon_sup[expected_idx]
+
+
+def test_the_destination_is_resampled_in_blocks():
+    """A whole swath is never held at once, so a polar pass cannot exhaust the memory.
+
+    The reference is resampled onto the swath's own geolocation, and that destination
+    is the largest thing in the calculation: a LAC pass is a few thousand lines of 2048
+    samples, and the resampler holds the arrays it is given. Handing it the swath in
+    blocks bounds what is live at any moment, at the cost of a little scheduling.
+    """
+    import xarray as xr
+    from georeferencer.georeferencer import swath_in_blocks
+
+    lons = xr.DataArray(np.zeros((3530, 2048)), dims=("y", "x"))
+    lats = xr.DataArray(np.zeros((3530, 2048)), dims=("y", "x"))
+
+    destination = swath_in_blocks(lons, lats)
+
+    assert max(max(sizes) for sizes in destination.lons.chunks) <= 1024

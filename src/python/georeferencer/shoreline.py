@@ -31,11 +31,22 @@ def profile_along(image, at, direction, reach):
     return map_coordinates(image, [rows, columns], order=1, mode="nearest")
 
 
+def _degrees_apart(one, other):
+    """Return how far apart two lon/lat points lie, in degrees, allowing for the meridian.
+
+    Either side may be a whole grid of points rather than a single one, so that the
+    same measure serves both for comparing two places and for searching a swath.
+    The eastward distance shrinks towards the poles, and it is *one*'s latitude that
+    sets that scaling.
+    """
+    (one_lon, one_lat), (other_lon, other_lat) = one, other
+    eastwards = ((one_lon - other_lon + 180) % 360 - 180) * np.cos(np.radians(one_lat))
+    return np.hypot(eastwards, one_lat - other_lat)
+
+
 def swath_pixel_of(lons, lats, point):
     """Return the swath pixel on which *point* falls, as a line and a column."""
-    lon, lat = point
-    eastwards = ((lons - lon + 180) % 360 - 180) * np.cos(np.radians(lats))
-    away = np.hypot(eastwards, lats - lat)
+    away = _degrees_apart((lons, lats), point)
     return np.unravel_index(np.argmin(away), away.shape)
 
 
@@ -62,6 +73,34 @@ def crosses_a_coast(profile, least_prominence):
     """Say whether the largest step in *profile* rises *least_prominence* above the median step."""
     steps = _steps_along(profile)
     return bool(np.max(steps) - np.median(steps) >= least_prominence)
+
+
+def coastline_within(coastline, lons, lats):
+    """Return the points of *coastline* that fall on the swath *lons* and *lats* describe.
+
+    A coastline database spans the globe and a pass sees a sliver of it. A point
+    the swath never covered has no profile to read: sampling one would return
+    whatever sits at the edge of the array and report it as a shore.
+
+    Nearness decides it, not a box drawn round the swath: a pass is a band across
+    the globe, so that box holds large corners it never imaged. Nor an array index:
+    :func:`swath_pixel_of` is a nearest-pixel search, so it answers for any point on
+    earth, and bounds-checking its answer can reject nothing.
+
+    How near is near enough is asked of the grid rather than fixed, because the
+    geolocation may be given on sample points rather than on every pixel. A point
+    counts as covered when it lies no further from its nearest sample than that
+    sample lies from the one beside it.
+    """
+    inside = []
+    for point in coastline:
+        line, column = swath_pixel_of(lons, lats, point)
+        beside = min(column + 1, lons.shape[1] - 1)
+        here = (lons[line, column], lats[line, column])
+        neighbour = (lons[line, beside], lats[line, beside])
+        if _degrees_apart(here, point) <= _degrees_apart(here, neighbour):
+            inside.append(point)
+    return inside
 
 
 def shoreline_offset(image, lons, lats, segment, reach, least_prominence):

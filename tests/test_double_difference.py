@@ -123,3 +123,61 @@ def test_where_the_coastline_puts_the_shore_does_not_reach_the_answer():
         reach=3, least_prominence=0.2)
 
     np.testing.assert_allclose(one_coastline, another_coastline, rtol=1e-9)
+
+
+def test_only_the_coastline_the_swath_actually_covers_is_measured():
+    """A coastline runs far beyond any one pass, and most of it is not in the image.
+
+    Measuring a crossing the swath never saw would read whatever happens to sit at
+    the edge of the array, so the coastline is cut down to what the pass covers
+    before anything is measured.
+    """
+    from georeferencer.shoreline import coastline_within
+
+    lons = np.tile(np.arange(10.), (5, 1))
+    lats = np.tile(np.array([[2.], [1.], [0.], [-1.], [-2.]]), (1, 10))
+    coastline = [(4., 1.), (5., 0.), (40., 60.)]
+
+    covered = coastline_within(coastline, lons, lats)
+
+    assert covered == [(4., 1.), (5., 0.)]
+
+
+def test_a_point_in_the_gap_a_slanted_swath_leaves_is_not_covered():
+    """A swath is a band across the globe, not a rectangle drawn around it.
+
+    A pass climbing north-east leaves large empty corners inside the box that
+    encloses it. A coastline point sitting in one of those corners was never
+    imaged, and judging coverage by the box would hand it a nearest pixel four
+    degrees away and read a shoreline off it.
+    """
+    from georeferencer.shoreline import coastline_within
+
+    lons = np.array([[0., 1., 2.], [10., 11., 12.], [20., 21., 22.]])
+    lats = np.array([[0., 0., 0.], [1., 1., 1.], [2., 2., 2.]])
+    on_the_band = (11., 1.)
+    in_the_corner = (6., 0.)
+
+    covered = coastline_within([on_the_band, in_the_corner], lons, lats)
+
+    assert covered == [on_the_band]
+
+
+def test_a_point_between_the_samples_of_a_coarse_swath_is_still_covered():
+    """How near is near enough depends on how finely the swath is described.
+
+    Geolocation is often computed on sample points rather than on every pixel, so
+    the grid handed to this measurement can be coarse. A point falling midway
+    between two samples of such a grid was imaged perfectly well, and a fixed reach
+    tuned for a fine grid would throw it away -- discarding real coastline for no
+    reason but the sampling of the array it was compared against.
+    """
+    from georeferencer.shoreline import coastline_within
+
+    lons = np.array([[0., 10., 20.], [0., 10., 20.], [0., 10., 20.]])
+    lats = np.array([[0., 0., 0.], [10., 10., 10.], [20., 20., 20.]])
+    between_two_samples = (5., 0.)
+
+    covered = coastline_within([between_two_samples], lons, lats)
+
+    assert covered == [between_two_samples]

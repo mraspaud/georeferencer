@@ -18,56 +18,71 @@ The obvious thing is to take each chip, match it against the navigated swath, an
 report the displacement. Call that the **single difference**. It is what the
 `gcp_x_displacement` / `gcp_y_displacement` variables on a product already hold.
 
-The trouble is that a single difference does not measure only geolocation error.
-It measures geolocation error *plus everything the measurement process itself
-contributes*:
+The trouble is what those chips are cut from. They are selected out of the Blue
+Marble reference itself, so a single difference measures the swath against the
+reference and nothing more. If the reference is displaced, every pass corrected
+against it is displaced identically: the passes agree beautifully with each other,
+with the reference, and with every internal consistency check available — and all
+of them are wrong together. Withheld control points cannot see it either, because
+they share the same reference.
 
-- **Resampling.** The swath is warped into the reference's grid before matching.
-  Interpolation shifts edges, and it shifts them differently depending on where a
-  pixel falls relative to the grid.
-- **Matcher bias.** The correlation surface is not symmetric. Peak location has a
-  bias that depends on the texture in the window, on how the Laplacian responds to
-  it, and on the sub-pixel interpolation used to refine the peak.
-- **Chip content.** A coastline chip with a strong straight edge is located
-  differently from a chip with a diffuse one, whatever imagery it is matched
-  against.
-
-None of these are properties of our navigation, and all of them are baked into a
-single difference. They are the most likely explanation for the chip-to-chip
-scatter we have never been able to attribute.
+Only an independent source reveals that common error. Matching a chip cut from the
+reference back against the reference is an autocorrelation and is identically
+zero, so it can never serve as the second term.
 
 ## The double difference
 
-Measure each chip **twice, in the same projection, through the same matcher**:
+Use a template neither image was fitted to: a **coastline chip from GSHHG**, an
+independent shoreline database. Match it against both images, at the same place,
+through the same method:
 
-| term | what is matched | what it contains |
+| term | what is measured | what it contains |
 |---|---|---|
-| **A** | chip against the **navigated swath** | geolocation error + resampling + matcher bias + chip content |
-| **B** | chip against the **Blue Marble reference** | resampling + matcher bias + chip content |
+| **A** | where the **navigated swath** puts the shoreline, against the GSHHG chip | our geolocation error + the chip's own error |
+| **B** | where **Blue Marble** puts the shoreline, against the same GSHHG chip | the reference's error + the same chip error |
 
 Then
 
 ```
-double difference = A − B
+offset(pass -> GSHHG)  -  offset(Blue Marble -> GSHHG)  =  offset(pass -> Blue Marble)
 ```
 
-Everything common to the two cancels. What is left is the part that differs
-between the swath and the reference — which is our geolocation error, and is the
-number we want. This is the same reasoning that makes a differential measurement
-preferable to an absolute one anywhere else: the shared systematics drop out.
+The GSHHG chip is *identical* in the two terms, so everything it contributes —
+coastline definition, tides, the database's own accuracy, the sampling of the
+profile — is common mode and subtracts out exactly. What remains is how well the
+pass matches the reference, per chip, free of the reference-versus-database
+disagreement that otherwise dominates the scatter.
 
-For the cancellation to be real, the two matches must be made **as identically as
-possible**:
+This is the whole point: that disagreement is large. Blue Marble against GSHHG
+runs to several hundred metres, which is the same order as the entire requirement,
+and it currently sits inside every per-chip number we quote. It does not belong
+there, because it is not our navigation.
 
-- the same chip, at the same location, with the same window size;
-- the same projection and the same grid, so both images are sampled the same way;
-- the same matcher, the same Laplacian pre-filter, the same sub-pixel refinement;
-- the same acceptance criteria, so a chip that is rejected in one term is dropped
-  from both rather than contributing to one alone.
+For the cancellation to be exact, the two measurements must be made **as
+identically as possible**:
 
-Term **B** is not expected to be zero. If it were, it would not be worth
-measuring. It is expected to be a small, structured bias that varies with chip
-content and grid alignment — and that is exactly the part we want removed from A.
+- the same GSHHG chip, at the same location, sampled the same way;
+- the same projection and grid, so both images are read at the same points;
+- the same shore-finding, the same sub-sample refinement;
+- the same acceptance criteria, so a chip rejected in one term is dropped from
+  both rather than contributing to one alone.
+
+### The decomposition this gives the report
+
+| term | what it is | how it is measured | does it average down? |
+|---|---|---|---|
+| pass -> Blue Marble | our fit quality | per chip; GSHHG cancels | no — this is the per-pixel term |
+| Blue Marble -> truth | the reference's own error | many patches, once, for the campaign | yes — one number for the whole record |
+
+The two are combined in quadrature and reported separately, never folded together.
+
+### What cannot serve as the independent source
+
+The ocean mask shipped alongside the reference (`c1_b1_c2_b2_oceanmask.tif`) is at
+Blue Marble's own posting and is co-registered to it. Whatever geolocation error
+Blue Marble carries, that mask carries identically. It is a good matching aid and
+useless as a check: validating against it would confirm the reference by
+construction.
 
 ## Units, and why they are per chip
 
@@ -171,6 +186,10 @@ Stating the limits plainly, because the number is only as good as its provenance
   measurement will not say so. That is a separate study — comparing the reference
   against an independent coastline database — and its result belongs alongside
   this one, combined in quadrature, not folded into it.
+- **It does not remove tides or coastline change.** Those are in the GSHHG chip,
+  and because the chip is common to both terms they cancel from the double
+  difference — but they do *not* cancel from the separate Blue-Marble-to-truth
+  study, where they are part of the irreducible noise.
 - **It does not account for terrain.** Chips are located on coastlines at sea
   level. Elevation displaces a pixel at any non-zero view angle, and that
   displacement is real geolocation error which this measurement will attribute to
@@ -185,8 +204,13 @@ Stating the limits plainly, because the number is only as good as its provenance
 ## Shape of the interface
 
 The tool needs, per pass: the calibrated dataset (for the swath imagery and its
-geolocation), and the path to the reference image. It returns the per-chip double
-differences and their per-axis summaries. It does not take, and must not take, a
+geolocation), the reference image, and the coastline database the chips are drawn
+from. It returns the per-chip double differences and their per-axis summaries.
+The coastline source is an argument rather than an assumption, because the whole
+construction rests on it being independent of both images -- a caller that passes
+the reference's own ocean mask would get a measurement that confirms the reference
+by construction, and the interface should make that an obvious mistake rather than
+a silent one. It does not take, and must not take, a
 set of fitted parameters — measuring against a fit is what the pipeline does
 elsewhere, and mixing the two is how a measurement quietly becomes a
 self-assessment.

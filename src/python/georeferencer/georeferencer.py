@@ -310,6 +310,22 @@ def estimate_gross_displacement(swath, reference, points, factor=8):
     return tuple(np.median(found, axis=0) * factor)
 
 
+def footprint_sizes(slant_range, local_zenith, field_of_view):
+    """Return the ground a single detector sees, along track and across track.
+
+    A footprint is not the spacing between samples, and the two must not be
+    confused: along track the line spacing is set by the platform's motion and is
+    near enough constant, while the footprint itself grows with the distance the
+    view has to travel.
+
+    Both axes grow with *slant_range*. Only the across-track axis is stretched by
+    the ground tilting away from the line of sight, which is what makes the
+    footprint rectangular away from nadir.
+    """
+    along = field_of_view * slant_range
+    return along, along / np.cos(local_zenith)
+
+
 def _clear_of_the_wrapped_seam(points, shape, steps):
     """Say which *points* keep their matching window clear of the carried swath's far end.
 

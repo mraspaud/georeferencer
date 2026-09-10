@@ -250,6 +250,26 @@ def shoreline_offsets(image, lons, lats, coastline, reach, least_prominence):
     return measured[np.isfinite(measured)]
 
 
+def _crossings_resolved_in_both(swath, swath_lons, swath_lats,
+                                reference, reference_lons, reference_lats,
+                                coastline, reach, least_prominence):
+    """Return the segments both images resolved, and what the two disagree by there.
+
+    A crossing that only one of the two resolves is dropped from both, so that the
+    difference is only ever taken where there are two readings to take it between.
+    Which crossings those are is needed twice -- once to difference them, once to
+    measure the pixel each was read against -- and is answered here once.
+    """
+    segments = list(zip(coastline, coastline[1:]))
+    ours = np.array([shoreline_offset(swath, swath_lons, swath_lats, segment,
+                                      reach, least_prominence) for segment in segments])
+    theirs = np.array([shoreline_offset(reference, reference_lons, reference_lats, segment,
+                                        reach, least_prominence) for segment in segments])
+    both = np.isfinite(ours) & np.isfinite(theirs)
+    resolved = [segment for segment, keep in zip(segments, both) if keep]
+    return resolved, ours[both] - theirs[both]
+
+
 def shoreline_double_difference(swath, swath_lons, swath_lats,
                                 reference, reference_lons, reference_lats,
                                 coastline, reach, least_prominence):
@@ -265,13 +285,10 @@ def shoreline_double_difference(swath, swath_lons, swath_lats,
     would let it enter the difference with nothing to cancel against, and bring
     back on that crossing exactly the error this construction removes.
     """
-    segments = list(zip(coastline, coastline[1:]))
-    ours = np.array([shoreline_offset(swath, swath_lons, swath_lats, segment,
-                                      reach, least_prominence) for segment in segments])
-    theirs = np.array([shoreline_offset(reference, reference_lons, reference_lats, segment,
-                                        reach, least_prominence) for segment in segments])
-    both = np.isfinite(ours) & np.isfinite(theirs)
-    return ours[both] - theirs[both]
+    _, misses = _crossings_resolved_in_both(
+        swath, swath_lons, swath_lats, reference, reference_lons, reference_lats,
+        coastline, reach, least_prominence)
+    return misses
 
 def measure_against_reference(swath, swath_lons, swath_lats,
                               reference, reference_lons, reference_lats,
@@ -306,17 +323,11 @@ def measure_against_reference(swath, swath_lons, swath_lats,
     )
 
     covered = coastline_within(coastline, swath_lons, swath_lats)
-    misses = shoreline_double_difference(swath, swath_lons, swath_lats,
-                                         reference, reference_lons, reference_lats,
-                                         covered, reach, least_prominence)
+    resolved, misses = _crossings_resolved_in_both(
+        swath, swath_lons, swath_lats, reference, reference_lons, reference_lats,
+        covered, reach, least_prominence)
     spacings, footprints = [], []
-    for start, end in zip(covered, covered[1:]):
-        if not np.isfinite(shoreline_offset(swath, swath_lons, swath_lats, (start, end),
-                                            reach, least_prominence)):
-            continue
-        if not np.isfinite(shoreline_offset(reference, reference_lons, reference_lats,
-                                            (start, end), reach, least_prominence)):
-            continue
+    for start, end in resolved:
         entering = swath_pixel_of(swath_lons, swath_lats, start)
         leaving = swath_pixel_of(swath_lons, swath_lats, end)
         normal = coast_normal(entering, leaving)

@@ -234,3 +234,26 @@ def test_a_coastline_is_read_from_a_shapefile(tmp_path):
     read = coastline_from(str(path))
 
     assert read == [[(0.0, 0.0), (1.0, 1.0), (2.0, 2.0)]]
+
+
+def test_a_point_nearest_the_last_sample_of_a_swath_is_still_covered():
+    """The reach is asked of the grid, and at the far edge there is no next sample.
+
+    Reading the spacing from the sample one column further east works everywhere
+    except the last column, where there is nothing further east and the question
+    answers itself with zero. Coverage would then be refused for every point whose
+    nearest sample is on that edge -- the whole trailing side of every swath.
+
+    Found on a dateline case, which is how it looks in the data: GSHHG's largest
+    polygon begins at longitude exactly 180, so a Pacific pass meets the swath edge
+    and the meridian in the same place. The wrap itself is handled; the edge is not.
+    """
+    from georeferencer.shoreline import coastline_within
+
+    lons = np.tile(np.array([179.5, 179.8, 180.0]), (3, 1))
+    lats = np.tile(np.array([[1.], [0.], [-1.]]), (1, 3))
+    just_past_the_line = (-179.9, 0.0)
+
+    covered = coastline_within([just_past_the_line], lons, lats)
+
+    assert covered == [just_past_the_line]

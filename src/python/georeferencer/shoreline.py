@@ -105,12 +105,14 @@ def coastline_within(coastline, lons, lats):
     How near is near enough is asked of the grid rather than fixed, because the
     geolocation may be given on sample points rather than on every pixel. A point
     counts as covered when it lies no further from its nearest sample than that
-    sample lies from the one beside it.
+    sample lies from the one beside it -- taken on whichever side there is one, since
+    at the last sample of a row there is nothing further out and a reach measured
+    against the sample itself would be zero, refusing the whole trailing edge.
     """
     inside = []
     for point in coastline:
         line, column = swath_pixel_of(lons, lats, point)
-        beside = min(column + 1, lons.shape[1] - 1)
+        beside = column + 1 if column + 1 < lons.shape[1] else column - 1
         here = (lons[line, column], lats[line, column])
         neighbour = (lons[line, beside], lats[line, beside])
         if _degrees_apart(here, point) <= _degrees_apart(here, neighbour):

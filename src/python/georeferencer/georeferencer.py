@@ -311,14 +311,35 @@ def estimate_gross_displacement(swath, reference, points, factor=8):
     return tuple(np.median(found, axis=0) * factor)
 
 
-def time_offset_from_scanlines(lines, times):
-    """Return the time that carrying the swath *lines* along its track stands for.
+def seconds_from_scanlines(lines, times):
+    """Return the along-track displacement of *lines* scan lines, expressed in seconds.
 
-    Scanlines arrive at a fixed rate, so a displacement along the track is the same
-    statement as a timing error, and the fit expresses it as one.
+    Scan lines arrive at a fixed rate, so a count of them can be written as a duration.
+    That is a change of units and nothing more: a swath sitting along its own track may
+    be doing so because its clock is wrong, because the orbit it was navigated from puts
+    it in the wrong place, or because the platform is pitched. All three displace it the
+    same way, and only the curvature across the swath tells them apart. Whether this
+    number is a clock error is the caller's judgement, not this package's.
     """
     seconds_per_line = np.diff(times).mean() / np.timedelta64(1, "s")
     return float(lines * seconds_per_line)
+
+
+def fit_navigation(calibrated_ds, gcps, gcp_lonlats, solve_for_time,
+                   yaw_steering=False, nadir_convention=None, time_offset_guess=0.0):
+    """Fit a navigation to control points already found."""
+    return estimate_time_and_attitude_deviations(
+        gcps,
+        gcp_lonlats[:, 0],
+        gcp_lonlats[:, 1],
+        calibrated_ds["times"][0].values,
+        calibrated_ds.attrs["tle"],
+        calibrated_ds.attrs["max_scan_angle"],
+        yaw_steering=yaw_steering,
+        nadir_convention=nadir_convention,
+        time_offset_guess=time_offset_guess,
+        solve_for_time=solve_for_time,
+    )
 
 
 def _clear_of_the_wrapped_seam(points, shape, steps):
@@ -381,8 +402,8 @@ def find_control_points(swath_coords, gcp_lonlats, swath, ref_swath):
     return valid_gcps, valid_gcp_lonlats, valid_swath_coords, carried
 
 
-def get_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path, dem_path=None,
-                           yaw_steering=False, nadir_convention=None):
+def measure_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path,
+                               dem_path=None):
     """Calculate the displacement between a swath image and a reference image.
 
     This function extracts a subset of the reference image, identifies
@@ -395,17 +416,12 @@ def get_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path
         sat_zen (2d Matrix): A 2d matrix with the same shape as the channel data containing the satellite zenith angles.
         reference_image_path (str): Path to the reference GeoTIFF image.
         dem_path (str, optional): Path to the DEM GeoTIFF image.
-        yaw_steering (bool, optional): Whether the platform turns as it flies to hold its
-            swath square to the ground track, as Metop does and the POES platforms do not.
-            It must match the convention the swath's own geolocation was computed with, or
-            the fit absorbs the difference as a whole-swath yaw of a few degrees.
-        nadir_convention (str, optional): Which way the geolocation calls down. It must
-            match the convention the swath's own geolocation was computed with, or the
-            fit takes up the difference as roll, which reaches some hundreds of metres.
 
     Returns:
-        tuple: Time, attitude and distances between the swath and reference image as
-            `(time difference, (roll, pitch, yaw), (distances_original, distances_minimized))`
+        tuple: The control points, the reference lon/lats they were matched to, and how far
+            along its own track the swath sits, in seconds, as
+            `(gcps, gcp_lonlats, along_track_seconds)`. What that displacement means for the
+            platform's clock is the caller's judgement, not this package's.
 
     Raises:
         ValueError: If no valid displacement is found.
@@ -440,18 +456,23 @@ def get_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path
     calibrated_ds["gcp_x_displacement"] = xr.DataArray(x_displacement, dims=["points"])
     calibrated_ds["gcp_y_displacement"] = xr.DataArray(y_displacement, dims=["points"])
 
+    along_track_seconds = seconds_from_scanlines(carried[0], calibrated_ds["times"].values)
+
     _translate_gcp_lines_to_scanline_offsets(calibrated_ds, gcps)
     logger.debug(f"Found {len(gcps)} valid gcps")
-    return estimate_time_and_attitude_deviations(
-        gcps,
-        valid_gcp_lonlats[:, 0],
-        valid_gcp_lonlats[:, 1],
-        calibrated_ds["times"][0].values,
-        calibrated_ds.attrs["tle"],
-        calibrated_ds.attrs["max_scan_angle"],
-        yaw_steering=yaw_steering,
-        nadir_convention=nadir_convention,
-        time_offset_guess=time_offset_from_scanlines(carried[0], calibrated_ds["times"].values),
+    return gcps, valid_gcp_lonlats, along_track_seconds
+
+
+def get_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_path, dem_path=None,
+                           yaw_steering=False, nadir_convention=None,
+                           solve_for_time=True):
+    """Measure a swath's displacement from a reference, and fit a navigation to it."""
+    gcps, gcp_lonlats, along_track_seconds = measure_swath_displacement(
+        calibrated_ds, sun_zen, sat_zen, reference_image_path, dem_path)
+    return fit_navigation(
+        calibrated_ds, gcps, gcp_lonlats, solve_for_time,
+        yaw_steering=yaw_steering, nadir_convention=nadir_convention,
+        time_offset_guess=along_track_seconds,
     )
 
 

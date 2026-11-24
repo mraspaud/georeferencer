@@ -613,6 +613,10 @@ def _process_scanline(i, dem_swath, lons, lats, swath_lats, swath_lons, sat_zen)
     return out_lat_line, out_lon_line
 
 
+#: How many scan lines' worth of supersampled points the DEM is read for at a time.
+DEM_LINES_PER_READ = 256
+
+
 def _get_dem_swath(dem_file_path, min_lats, max_lats, min_lon, max_lon, lons_sup, lats_sup):
     src = open_subset_tif(dem_file_path, min_lats, max_lats, min_lon, max_lon).squeeze(drop=True)
 
@@ -625,15 +629,23 @@ def _get_dem_swath(dem_file_path, min_lats, max_lats, min_lon, max_lon, lons_sup
 
     valid_mask = (rows >= 0) & (rows < nrows) & (cols >= 0) & (cols < ncols)
 
-    rows_flat = rows.ravel()[valid_mask.ravel()]
-    cols_flat = cols.ravel()[valid_mask.ravel()]
+    # Read the DEM a block of scan lines at a time, each only over the window its points
+    # fall in: indexing points one by one through dask is slow and holds most of the DEM
+    # in memory at once, while the swath crosses its bounding box as a narrow band.
+    output = np.full(lons_sup.shape, np.nan)
+    for first in range(0, lons_sup.shape[0], DEM_LINES_PER_READ):
+        block = slice(first, first + DEM_LINES_PER_READ)
+        inside = valid_mask[block]
+        if not inside.any():
+            continue
+        block_rows, block_cols = rows[block][inside], cols[block][inside]
+        top, left = block_rows.min(), block_cols.min()
+        window = src.isel(y=slice(top, block_rows.max() + 1), x=slice(left, block_cols.max() + 1)).values
+        values = output[block]
+        values[inside] = window[block_rows - top, block_cols - left]
+        output[block] = values
 
-    values = src.data.vindex[(rows_flat, cols_flat)].compute(scheduler="threads")
-
-    output = np.full(lons_sup.size, np.nan)
-    output[np.where(valid_mask.ravel())[0]] = values
-
-    return output.reshape(lons_sup.shape)
+    return output
 
 
 def orthocorrection(calibrated_ds, sat_zen, dem_file_path):

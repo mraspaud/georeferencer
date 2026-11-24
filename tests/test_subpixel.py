@@ -51,3 +51,22 @@ def test_a_maximum_between_four_pixels_is_found_from_the_four_by_four_box_around
 
     assert y == pytest.approx(cy, abs=0.1)
     assert x == pytest.approx(cx, abs=0.1)
+
+
+def test_a_fit_stepping_beyond_the_neighbouring_pixels_falls_back_to_the_peak_pixel():
+    """A fitted maximum further than a pixel from the peak pixel is not trusted, the peak pixel is kept.
+
+    Two close peaks of nearly equal height make the cubic fit's stationary point land
+    several pixels away, outside the box it was fitted on. Section VI of Khlopenkov et
+    al. (2010) does not say what to do then; a maximum that disagrees with the samples
+    around it this badly is worse than none, so the integer location stands.
+    """
+    yy, xx = np.mgrid[:49, :49]
+    cy, cx, width = 27.53, 27.891, 1.18
+    surface = np.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * width**2))
+    surface += 0.929 * np.exp(-((yy - cy - 0.704) ** 2 + (xx - cx - 2.45) ** 2) / (2 * width**2))
+    surface = (255 * (surface - surface.min()) / (surface.max() - surface.min())).astype(np.float32)
+
+    y, x = located(surface)
+
+    assert (y, x) == (28, 29)

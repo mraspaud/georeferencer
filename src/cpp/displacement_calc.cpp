@@ -117,7 +117,13 @@ std::tuple<float, float> subpixel_maximum(const Eigen::MatrixXf &res, int dy, in
 
     const int side_x = std::abs(x0 - dx) > 0.25f ? (x0 > dx ? 1 : -1) : 0;
     const int side_y = std::abs(y0 - dy) > 0.25f ? (y0 > dy ? 1 : -1) : 0;
-    return fit_around_the_maximum(res, dy, dx, side_x, side_y);
+    const auto [x, y] = fit_around_the_maximum(res, dy, dx, side_x, side_y);
+
+    // A maximum further than a pixel from the peak pixel lies outside the samples it
+    // was fitted on: the fit then disagrees with the surface, so the peak pixel stands.
+    if (std::abs(x - dx) > 1.0f || std::abs(y - dy) > 1.0f)
+        return {static_cast<float>(dx), static_cast<float>(dy)};
+    return {x, y};
 }
 
 Eigen::MatrixXf calculate_covariance_matrix(const Eigen::Ref<const Eigen::MatrixXf> &P,

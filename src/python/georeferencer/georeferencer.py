@@ -552,28 +552,39 @@ def measure_swath_displacement_with_filename(swath_file, tle_dir, tle_file, refe
 
 
 @njit(nogil=True)
+def _furthest_hiding_point(elev, dists, tan_view, idx_nom, sup_nadir, reach):
+    """Return the furthest point towards nadir whose terrain rises into the line of sight.
+
+    Nothing further than *reach* can, so the search stops there.
+    """
+    best_idx = idx_nom
+    step = 1 if idx_nom <= sup_nadir else -1
+    for k in range(idx_nom, sup_nadir, step):
+        delta = abs(dists[k] - dists[idx_nom])
+        if delta > reach:
+            break
+        if elev[k] > (delta / tan_view):
+            best_idx = k
+    return best_idx
+
+
+@njit(nogil=True)
 def _orthocorrect_line(elev, dists, tanz, swath_lats_i, swath_lons_i, lon_sup, lat_sup, out_lat, out_lon):
     npix = swath_lats_i.shape[0]
     nadir = np.argmin(tanz)
     sup_nadir = nadir * 4
+    # No point further from a pixel than the highest terrain on the line times the
+    # pixel's view slope can rise into its line of sight.
+    highest = 0.0
+    for k in range(elev.shape[0]):
+        if elev[k] > highest:
+            highest = elev[k]
     for j in range(npix):
         if tanz[j] == 0:
             out_lat[j] = swath_lats_i[j]
             out_lon[j] = swath_lons_i[j]
             continue
-        idx_nom = j * 4
-        best_idx = idx_nom
-        if idx_nom <= sup_nadir:
-            for k in range(idx_nom, sup_nadir):
-                delta = abs(dists[k] - dists[idx_nom])
-                if elev[k] > (delta / tanz[j]):
-                    best_idx = k
-        else:
-            for k in range(idx_nom, sup_nadir, -1):
-                delta = abs(dists[idx_nom] - dists[k])
-                if elev[k] > (delta / tanz[j]):
-                    best_idx = k
-
+        best_idx = _furthest_hiding_point(elev, dists, tanz[j], j * 4, sup_nadir, highest * tanz[j])
         out_lat[j] = lat_sup[best_idx]
         out_lon[j] = lon_sup[best_idx]
 

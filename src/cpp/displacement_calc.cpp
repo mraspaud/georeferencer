@@ -324,4 +324,5 @@ PYBIND11_MODULE(displacement_calc, m)
     m.def("calculate_covariance_matrix", &calculate_covariance_matrix, "Calculate covariance matrix");
     m.def("laplacian_operator", &laplacian_operator, "Apply Laplacian operator");
     m.def("calculate_covariance_displacement", &calculate_covariance_displacement, "Calculate covariance displacement");
+    m.def("subpixel_maximum", &subpixel_maximum, "Locate the covariance maximum between pixels, as (x, y)");
 }

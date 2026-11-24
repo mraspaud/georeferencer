@@ -615,10 +615,22 @@ def _process_scanline(i, dem_swath, lons, lats, swath_lats, swath_lons, sat_zen)
 #: How many scan lines' worth of supersampled points the DEM is read for at a time.
 DEM_LINES_PER_READ = 256
 
+#: How many scan lines are orthocorrected at a time. Each is corrected on its own, so the
+#: pass is taken in blocks rather than holding its four-times-finer grid whole.
+ORTHOCORRECTION_LINES_PER_BLOCK = 256
+
 
 def _get_dem_swath(dem_file_path, min_lats, max_lats, min_lon, max_lon, lons_sup, lats_sup):
-    src = open_subset_tif(dem_file_path, min_lats, max_lats, min_lon, max_lon).squeeze(drop=True)
+    return _heights_under(_dem_subset(dem_file_path, min_lats, max_lats, min_lon, max_lon), lons_sup, lats_sup)
 
+
+def _dem_subset(dem_file_path, min_lats, max_lats, min_lon, max_lon):
+    """Open, without reading, the part of the DEM around a swath."""
+    return open_subset_tif(dem_file_path, min_lats, max_lats, min_lon, max_lon).squeeze(drop=True)
+
+
+def _heights_under(src, lons_sup, lats_sup):
+    """Return the height of the DEM pixel under each point, NaN off the DEM."""
     transform = src.rio.transform()
     x_min, y_max, x_res, y_res = transform.c, transform.f, transform.a, transform.e
     nrows, ncols = src.sizes["y"], src.sizes["x"]
@@ -649,33 +661,31 @@ def _get_dem_swath(dem_file_path, min_lats, max_lats, min_lon, max_lon, lons_sup
 
 def orthocorrection(calibrated_ds, sat_zen, dem_file_path):
     """Performs orthocorrection on latitude and longitude based on satellite viewing angles."""
-    swath_lons = calibrated_ds["longitude"]
-    swath_lats = calibrated_ds["latitude"]
-    lons, lats = lonlat_interpolator(swath_lons, swath_lats, np.arange(2048), np.arange(0, 2048, 0.25))
-
-    dem_swath = _get_dem_swath(
-        dem_file_path, np.min(swath_lats), np.max(swath_lats), np.min(swath_lons), np.max(swath_lons), lons, lats
-    )
+    swath_lons = np.asarray(calibrated_ds["longitude"])
+    swath_lats = np.asarray(calibrated_ds["latitude"])
+    dem = _dem_subset(dem_file_path, np.min(swath_lats), np.max(swath_lats), np.min(swath_lons), np.max(swath_lons))
     out_lats = np.full_like(swath_lats, np.nan, dtype=np.float64)
     out_lons = np.full_like(swath_lons, np.nan, dtype=np.float64)
-    nscan, _ = swath_lons.shape
-    process_func = partial(
-        _process_scanline,
-        dem_swath=dem_swath,
-        lons=lons,
-        lats=lats,
-        swath_lats=swath_lats.values,
-        swath_lons=swath_lons.values,
-        sat_zen=sat_zen,
-    )
+    nscan, ncols = swath_lons.shape
 
     num_workers = int(os.getenv("THREADS", os.cpu_count() or 4))
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        results = executor.map(process_func, range(nscan))
-
-        for i, (lat_line, lon_line) in enumerate(results):
-            out_lats[i] = lat_line
-            out_lons[i] = lon_line
+        for first in range(0, nscan, ORTHOCORRECTION_LINES_PER_BLOCK):
+            block = slice(first, first + ORTHOCORRECTION_LINES_PER_BLOCK)
+            lons, lats = lonlat_interpolator(swath_lons[block], swath_lats[block],
+                                             np.arange(ncols), np.arange(0, ncols, 0.25))
+            process_func = partial(
+                _process_scanline,
+                dem_swath=_heights_under(dem, lons, lats),
+                lons=lons,
+                lats=lats,
+                swath_lats=swath_lats[block],
+                swath_lons=swath_lons[block],
+                sat_zen=sat_zen[block],
+            )
+            for i, (lat_line, lon_line) in enumerate(executor.map(process_func, range(lons.shape[0]))):
+                out_lats[first + i] = lat_line
+                out_lons[first + i] = lon_line
 
     calibrated_ds["tc_latitude"] = (calibrated_ds["latitude"].dims, out_lats)
     calibrated_ds["tc_longitude"] = (calibrated_ds["longitude"].dims, out_lons)

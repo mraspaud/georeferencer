@@ -12,7 +12,6 @@ from functools import partial
 from typing import NamedTuple
 
 import dask.array as da
-import geotiepoints as gtp
 import numpy as np
 import rioxarray
 import xarray as xr
@@ -684,14 +683,18 @@ def orthocorrection(calibrated_ds, sat_zen, dem_file_path):
 
 
 def lonlat_interpolator(lons, lats, cols_subset, cols_full):
-    """Interpolate from lat-lon tie-points to pixel locations."""
-    rows = np.arange(len(lats))
-    along_track_order = 1
-    cross_track_order = 3
-    satint = gtp.SatelliteInterpolator(
-        (lons, lats), (rows, cols_subset), (rows, cols_full), along_track_order, cross_track_order
-    )
-    return satint.interpolate()
+    """Interpolate from lat-lon tie-points to pixel locations along each scan line.
+
+    Each line is a cubic spline through its pixels in earth-centred coordinates, the one
+    geotiepoints fits; it is fitted for every line at once rather than line by line,
+    which was most of the orthocorrection's time on a full pass.
+    """
+    from geotiepoints.geointerpolator import lonlat2xyz, xyz2lonlat
+    from scipy.interpolate import CubicSpline
+
+    xyz = lonlat2xyz(np.asarray(lons, dtype=float), np.asarray(lats, dtype=float))
+    fine = [CubicSpline(cols_subset, coordinate, axis=1, bc_type="not-a-knot")(cols_full) for coordinate in xyz]
+    return xyz2lonlat(*fine)
 
 
 # -----------------------------------------------------------------------------

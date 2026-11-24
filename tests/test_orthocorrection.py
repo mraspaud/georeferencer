@@ -66,3 +66,34 @@ def test_terrain_moves_many_pixels_in_these_lines():
         moved.append(np.mean(out_lon != lons))
 
     assert np.median(moved) > 0.2
+
+
+def test_the_dem_is_read_under_every_supersampled_point(tmp_path):
+    """Each point gets the height of the DEM pixel it falls in, and NaN off the DEM's edge.
+
+    The grid is long enough to be read in more than one piece, so the answer must not
+    depend on where one piece ends and the next begins.
+    """
+    import rasterio
+    from georeferencer.georeferencer import _get_dem_swath
+    from rasterio.transform import from_origin
+
+    heights = np.arange(200 * 300, dtype="float32").reshape(200, 300)
+    dem = tmp_path / "dem.tif"
+    with rasterio.open(dem, "w", driver="GTiff", height=200, width=300, count=1, dtype="float32",
+                       crs="EPSG:4326", transform=from_origin(10.0, 50.0, 0.1, 0.1)) as out:
+        out.write(heights, 1)
+    rng = np.random.default_rng(0)
+    # off the DEM's last two rows and columns, which the subsetting can round away
+    rows = rng.integers(0, 198, size=(1500, 40))
+    cols = rng.integers(0, 298, size=(1500, 40))
+    lons = 10.0 + (cols + 0.1) * 0.1        # just inside each pixel's corner
+    lats = 50.0 - (rows + 0.1) * 0.1
+    lons[:, 0] = 5.0                         # west of the DEM
+    lats[:, 1] = 60.0                        # north of it
+
+    found = _get_dem_swath(dem, 30.0, 50.0, 10.0, 40.0, lons, lats)
+
+    expected = heights[rows, cols].astype(float)
+    expected[:, :2] = np.nan
+    np.testing.assert_array_equal(found, expected)

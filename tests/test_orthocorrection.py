@@ -97,3 +97,37 @@ def test_the_dem_is_read_under_every_supersampled_point(tmp_path):
     expected = heights[rows, cols].astype(float)
     expected[:, :2] = np.nan
     np.testing.assert_array_equal(found, expected)
+
+
+def a_swath_of_lonlats(lines=300):
+    """Return lon/lats laid out like an AVHRR swath: lines along an inclined track, 2048 samples across."""
+    from pyproj import Geod
+
+    geod = Geod(ellps="WGS84")
+    track_lons, track_lats, _ = geod.fwd(np.full(lines, 20.0), np.full(lines, -30.0),
+                                         np.full(lines, -12.0), np.arange(lines) * 1100.0)
+    across = np.tan(np.deg2rad(np.linspace(-55.37, 55.37, 2048))) * 830e3      # flat-earth spread, grows at the edges
+    lons, lats, _ = geod.fwd(np.repeat(track_lons, 2048).reshape(lines, 2048),
+                             np.repeat(track_lats, 2048).reshape(lines, 2048),
+                             np.full((lines, 2048), 78.0), np.tile(across, (lines, 1)))
+    return lons, lats
+
+
+def test_the_supersampled_grid_follows_the_spline_through_every_pixel():
+    """The grid the terrain is searched on is a cubic spline through each scan line's pixels.
+
+    Fitted line by line it was most of the orthocorrection's time; however it is fitted,
+    the points must be where that spline puts them.
+    """
+    import geotiepoints as gtp
+    from georeferencer.georeferencer import lonlat_interpolator
+
+    lons, lats = a_swath_of_lonlats()
+    fine = np.arange(0, 2048, 0.25)
+    expected_lons, expected_lats = gtp.SatelliteInterpolator(
+        (lons, lats), (np.arange(len(lats)), np.arange(2048)), (np.arange(len(lats)), fine), 1, 3).interpolate()
+
+    found_lons, found_lats = lonlat_interpolator(lons, lats, np.arange(2048), fine)
+
+    np.testing.assert_allclose(found_lons, expected_lons, rtol=0, atol=1e-9)
+    np.testing.assert_allclose(found_lats, expected_lats, rtol=0, atol=1e-9)

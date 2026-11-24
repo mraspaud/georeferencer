@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <Eigen/Dense>
 #include <iostream>
@@ -10,127 +11,91 @@
 
 namespace py = pybind11;
 
-std::tuple<float, float> third_order_polynomial_fitting_4x4(const Eigen::MatrixXf &res, int dx, int dy)
+// Locating the covariance maximum between pixels, as in Khlopenkov, Trishchenko and Luo
+// (2010), "Achieving subpixel georeferencing accuracy in the Canadian AVHRR processing
+// system", IEEE TGRS 48(4), section VI. A parabola through the peak and its neighbours
+// along each axis first estimates where the maximum lies. Close to the grid node, a
+// quadratic is fitted to the 3 x 3 neighbourhood (their eq. 10). Between two pixels along
+// one axis, the box is widened to four samples along that axis and a cubic term added
+// (eq. 11); between four pixels, a cubic surface is fitted to a 4 x 4 box (eq. 12). In
+// every case the box straddles the expected maximum, the samples nearest it weighted
+// four, the sides two and the corners one.
+
+namespace
 {
-    constexpr std::array<std::array<double, 4>, 4> weights = {{{1.0, 2.0, 2.0, 1.0},
-                                                               {2.0, 4.0, 4.0, 2.0},
-                                                               {2.0, 4.0, 4.0, 2.0},
-                                                               {1.0, 2.0, 2.0, 1.0}}};
+// One axis of the fitting box: where it starts relative to the peak pixel, how many
+// samples it holds, where its centre lies, and the weight of each sample.
+struct BoxAxis
+{
+    int first;
+    int count;
+    double centre;
+    std::array<double, 4> weight;
+};
 
-    Eigen::Matrix<double, 16, 10> A;
-    Eigen::Vector<double, 16> b;
-    int idx = 0;
-
-    for (int j = -2; j <= 1; ++j)
-    {
-        for (int i = -2; i <= 1; ++i)
-        {
-            const int xi = dx + i, yi = dy + j;
-            if (xi < 0 || xi >= res.cols() || yi < 0 || yi >= res.rows())
-                continue;
-
-            const double x = i + 0.5, y = j + 0.5;
-            const double x2 = x * x, y2 = y * y;
-            const double w = weights[j + 2][i + 2];
-
-            A.row(idx) << x * x * x, y * y * y, x2 * y, x * y2, x2, y2, x * y, x, y, 1.0;
-            A.row(idx) *= w;
-            b[idx++] = w * res(yi, xi);
-        }
-    }
-
-    if (idx < 10)
-        return {dx - 0.5f, dy - 0.5f};
-
-    const Eigen::Matrix<double, 10, 1> params = A.topRows(idx).jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b.head(idx));
-    const Eigen::Matrix2d Hessian = (Eigen::Matrix2d() << 2 * params[4], params[6], params[6], 2 * params[5]).finished();
-    const Eigen::Vector2d grad(params[7], params[8]);
-
-    if (std::abs(Hessian.determinant()) < 1e-6)
-        return {dx - 0.5f, dy - 0.5f};
-
-    const Eigen::Vector2d offset = -Hessian.inverse() * grad;
-    return {dx - 0.5f + static_cast<float>(offset[0]), dy - 0.5f + static_cast<float>(offset[1])};
+BoxAxis box_axis(int side)
+{
+    if (side > 0)
+        return {-1, 4, 0.5, {1.0, 2.0, 2.0, 1.0}};   // maximum beyond the peak pixel
+    if (side < 0)
+        return {-2, 4, -0.5, {1.0, 2.0, 2.0, 1.0}};  // maximum before it
+    return {-1, 3, 0.0, {1.0, 2.0, 1.0, 0.0}};       // maximum close to it
 }
 
-std::tuple<float, float> third_order_polynomial_fitting(const Eigen::MatrixXf &res, int dy, int dx, bool expand_x)
+// The polynomial terms, cubic ones first, then x^2, y^2, xy, x, y, 1.
+int polynomial_terms(double x, double y, int side_x, int side_y, double *terms)
 {
-    const int i_min = expand_x ? -2 : -1, i_max = 1;
-    const int j_min = expand_x ? -1 : -2, j_max = 1;
-
-    Eigen::Matrix<double, 12, 9> A;
-    Eigen::Vector<double, 12> b;
-    int idx = 0;
-
-    for (int j = j_min; j <= j_max; ++j)
+    int n = 0;
+    if (side_x != 0)
+        terms[n++] = x * x * x;
+    if (side_y != 0)
+        terms[n++] = y * y * y;
+    if (side_x != 0 || side_y != 0)
     {
-        for (int i = i_min; i <= i_max; ++i)
+        terms[n++] = x * x * y;
+        terms[n++] = x * y * y;
+    }
+    for (double t : {x * x, y * y, x * y, x, y, 1.0})
+        terms[n++] = t;
+    return n;
+}
+} // namespace
+
+std::tuple<float, float> fit_around_the_maximum(const Eigen::MatrixXf &res, int dy, int dx, int side_x, int side_y)
+{
+    const BoxAxis ax = box_axis(side_x), ay = box_axis(side_y);
+    double terms[10];
+    const int n_terms = polynomial_terms(0.0, 0.0, side_x, side_y, terms);
+
+    Eigen::MatrixXd A(ax.count * ay.count, n_terms);
+    Eigen::VectorXd b(ax.count * ay.count);
+    int rows = 0;
+    for (int j = 0; j < ay.count; ++j)
+    {
+        for (int i = 0; i < ax.count; ++i)
         {
-            const int xi = dx + i, yi = dy + j;
+            const int xi = dx + ax.first + i, yi = dy + ay.first + j;
             if (xi < 0 || xi >= res.cols() || yi < 0 || yi >= res.rows())
                 continue;
-
-            const double x = i, y = j;
-            const double x2 = x * x, y2 = y * y;
-            double weight = 1.0;
-
-            if (x == 0 && y == 0)
-                weight = 4.0;
-            else if ((expand_x && abs(i) == 1 && j == 0) || (!expand_x && abs(j) == 1 && i == 0))
-                weight = 4.0;
-            else if (abs(i) + abs(j) == 1)
-                weight = 2.0;
-
-            A.row(idx) << x * x * x, x2 * y, x * y2, x2, y2, x * y, x, y, 1.0;
-            A.row(idx) *= weight;
-            b[idx++] = weight * res(yi, xi);
+            const double w = ax.weight[i] * ay.weight[j];
+            polynomial_terms(ax.first + i - ax.centre, ay.first + j - ay.centre, side_x, side_y, terms);
+            for (int t = 0; t < n_terms; ++t)
+                A(rows, t) = w * terms[t];
+            b[rows++] = w * res(yi, xi);
         }
     }
-
-    if (idx < 9)
+    if (rows < n_terms)
         return {static_cast<float>(dx), static_cast<float>(dy)};
 
-    const Eigen::Matrix<double, 9, 1> params = A.topRows(idx).jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b.head(idx));
-    const Eigen::Matrix2d M = (Eigen::Matrix2d() << 2 * params[3], params[5], params[5], 2 * params[4]).finished();
-    const Eigen::Vector2d rhs(-params[6], -params[7]);
-
-    if (std::abs(M.determinant()) < 1e-6)
+    const Eigen::VectorXd p = A.topRows(rows).jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b.head(rows));
+    const int q = n_terms - 6; // where the quadratic part begins
+    const Eigen::Matrix2d hessian = (Eigen::Matrix2d() << 2 * p[q], p[q + 2], p[q + 2], 2 * p[q + 1]).finished();
+    const Eigen::Vector2d gradient(p[q + 3], p[q + 4]);
+    if (std::abs(hessian.determinant()) < 1e-6)
         return {static_cast<float>(dx), static_cast<float>(dy)};
 
-    const Eigen::Vector2d offset = M.inverse() * rhs;
-    return {static_cast<float>(dx + offset[0]), static_cast<float>(dy + offset[1])};
-}
-std::tuple<float, float> second_order_polynomial_fitting(const Eigen::MatrixXf &res, int dy, int dx)
-{
-    constexpr std::array<std::array<double, 3>, 3> weights = {{{1.0, 2.0, 1.0},
-                                                               {2.0, 4.0, 2.0},
-                                                               {1.0, 2.0, 1.0}}};
-
-    Eigen::Matrix<double, 9, 6> A;
-    Eigen::Vector<double, 9> b;
-    int idx = 0;
-
-    for (int j = -1; j <= 1; ++j)
-    {
-        for (int i = -1; i <= 1; ++i)
-        {
-            const double x = i, y = j;
-            const double w = weights[j + 1][i + 1];
-
-            A.row(idx) << x * x, y * y, x * y, x, y, 1.0;
-            A.row(idx) *= w;
-            b[idx++] = w * res(dy + j, dx + i);
-        }
-    }
-
-    const Eigen::Matrix<double, 6, 1> params = A.jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b);
-    const Eigen::Matrix2d M = (Eigen::Matrix2d() << 2 * params[0], params[2], params[2], 2 * params[1]).finished();
-
-    if (M.determinant() < 1e-6)
-        return {static_cast<float>(dx), static_cast<float>(dy)};
-
-    const Eigen::Vector2d offset = M.inverse() * Eigen::Vector2d(-params[3], -params[4]);
-    return {static_cast<float>(dx + offset[0]), static_cast<float>(dy + offset[1])};
+    const Eigen::Vector2d offset = -hessian.inverse() * gradient;
+    return {static_cast<float>(dx + ax.centre + offset[0]), static_cast<float>(dy + ay.centre + offset[1])};
 }
 
 std::tuple<float, float> subpixel_maximum(const Eigen::MatrixXf &res, int dy, int dx)
@@ -150,16 +115,9 @@ std::tuple<float, float> subpixel_maximum(const Eigen::MatrixXf &res, int dy, in
     const float b_y = (y_vals[2] - y_vals[0]) / 2.0f;
     const float y0 = a_y < -1e-6f ? std::clamp(dy - b_y / (2 * a_y), 0.0f, float(res.rows() - 1)) : dy;
 
-    const float dx_diff = std::abs(x0 - dx);
-    const float dy_diff = std::abs(y0 - dy);
-
-    if (dx_diff <= 0.25f && dy_diff <= 0.25f)
-        return second_order_polynomial_fitting(res, dy, dx);
-    if (dx_diff > 0.25f && dy_diff <= 0.25f)
-        return third_order_polynomial_fitting(res, dy, dx, true);
-    if (dy_diff > 0.25f && dx_diff <= 0.25f)
-        return third_order_polynomial_fitting(res, dy, dx, false);
-    return third_order_polynomial_fitting_4x4(res, dy, dx);
+    const int side_x = std::abs(x0 - dx) > 0.25f ? (x0 > dx ? 1 : -1) : 0;
+    const int side_y = std::abs(y0 - dy) > 0.25f ? (y0 > dy ? 1 : -1) : 0;
+    return fit_around_the_maximum(res, dy, dx, side_x, side_y);
 }
 
 Eigen::MatrixXf calculate_covariance_matrix(const Eigen::Ref<const Eigen::MatrixXf> &P,

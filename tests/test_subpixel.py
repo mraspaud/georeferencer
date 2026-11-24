@@ -26,3 +26,28 @@ def test_a_maximum_near_a_pixel_is_found_from_its_neighbourhood(cy, cx):
 
     assert y == pytest.approx(cy, abs=0.05)
     assert x == pytest.approx(cx, abs=0.05)
+
+
+@pytest.mark.parametrize(("cy", "cx"), [(24.0, 30.45), (24.0, 29.55), (18.45, 26.0), (17.55, 26.0)])
+def test_a_maximum_between_two_pixels_is_found_from_four_along_that_axis(cy, cx):
+    """Between two pixels along one axis, a cubic is fitted to four samples along it, two on each side.
+
+    The two samples nearest the expected maximum sit in the middle, whichever side of
+    the peak pixel it lies on.
+    """
+    y, x = located(a_peak(cy, cx))
+
+    assert y == pytest.approx(cy, abs=0.1)
+    assert x == pytest.approx(cx, abs=0.1)
+
+
+@pytest.mark.parametrize(("cy", "cx"), [(20.4, 30.45), (20.4, 29.6), (19.6, 30.45), (19.6, 29.55)])
+def test_a_maximum_between_four_pixels_is_found_from_the_four_by_four_box_around_it(cy, cx):
+    """Between four pixels, a cubic surface is fitted to the 4 x 4 box with those four at its centre.
+
+    Off the diagonal and in every quadrant, so neither the axes nor the side can be mixed up.
+    """
+    y, x = located(a_peak(cy, cx))
+
+    assert y == pytest.approx(cy, abs=0.1)
+    assert x == pytest.approx(cx, abs=0.1)

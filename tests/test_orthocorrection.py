@@ -68,8 +68,13 @@ def test_terrain_moves_many_pixels_in_these_lines():
     assert np.median(moved) > 0.2
 
 
-def test_the_dem_is_read_under_every_supersampled_point(tmp_path):
-    """Each point gets the height of the DEM pixel it falls in, and NaN off the DEM's edge.
+def test_the_dem_is_interpolated_between_pixel_centres_under_every_supersampled_point(tmp_path):
+    """Each point gets the height bilinearly interpolated between the four DEM pixel centres around it.
+
+    As Khlopenkov et al. (2010) do: the DEM is about as coarse as the swath pixels, and
+    the supersampled points fall anywhere inside its pixels, so taking one pixel's value
+    puts the terrain up to half a DEM pixel out of place. A bilinear surface is followed
+    exactly, wherever the points fall; off the DEM's edge the height is NaN.
 
     The grid is long enough to be read in more than one piece, so the answer must not
     depend on where one piece ends and the next begins.
@@ -78,25 +83,27 @@ def test_the_dem_is_read_under_every_supersampled_point(tmp_path):
     from georeferencer.georeferencer import _get_dem_swath
     from rasterio.transform import from_origin
 
-    heights = np.arange(200 * 300, dtype="float32").reshape(200, 300)
+    rows, cols = np.mgrid[:200, :300]
+    heights = 100.0 + 3.0 * cols - 2.0 * rows + 0.01 * rows * cols
     dem = tmp_path / "dem.tif"
-    with rasterio.open(dem, "w", driver="GTiff", height=200, width=300, count=1, dtype="float32",
+    with rasterio.open(dem, "w", driver="GTiff", height=200, width=300, count=1, dtype="float64",
                        crs="EPSG:4326", transform=from_origin(10.0, 50.0, 0.1, 0.1)) as out:
         out.write(heights, 1)
     rng = np.random.default_rng(0)
-    # off the DEM's last two rows and columns, which the subsetting can round away
-    rows = rng.integers(0, 198, size=(1500, 40))
-    cols = rng.integers(0, 298, size=(1500, 40))
-    lons = 10.0 + (cols + 0.1) * 0.1        # just inside each pixel's corner
-    lats = 50.0 - (rows + 0.1) * 0.1
+    # anywhere between the centres of the DEM's pixels, short of its last two rows and
+    # columns, which the subsetting can round away
+    row = rng.uniform(0, 197, size=(1500, 40))
+    col = rng.uniform(0, 297, size=(1500, 40))
+    lons = 10.0 + (col + 0.5) * 0.1
+    lats = 50.0 - (row + 0.5) * 0.1
     lons[:, 0] = 5.0                         # west of the DEM
     lats[:, 1] = 60.0                        # north of it
 
     found = _get_dem_swath(dem, 30.0, 50.0, 10.0, 40.0, lons, lats)
 
-    expected = heights[rows, cols].astype(float)
+    expected = 100.0 + 3.0 * col - 2.0 * row + 0.01 * row * col
     expected[:, :2] = np.nan
-    np.testing.assert_array_equal(found, expected)
+    np.testing.assert_allclose(found, expected, rtol=0, atol=1e-6)
 
 
 def a_swath_of_lonlats(lines=300):

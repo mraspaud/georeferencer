@@ -630,15 +630,14 @@ def _dem_subset(dem_file_path, min_lats, max_lats, min_lon, max_lon):
 
 
 def _heights_under(src, lons_sup, lats_sup):
-    """Return the height of the DEM pixel under each point, NaN off the DEM."""
+    """Return the DEM's height under each point, bilinear between pixel centres, NaN off the DEM.
+
+    As Khlopenkov et al. (2010) do: the DEM is about as coarse as the swath pixels, so
+    taking the value of one DEM pixel would put the terrain up to half a DEM pixel out of
+    place. Between the outermost pixel centres and the DEM's edge, the edge is carried out.
+    """
     transform = src.rio.transform()
-    x_min, y_max, x_res, y_res = transform.c, transform.f, transform.a, transform.e
     nrows, ncols = src.sizes["y"], src.sizes["x"]
-
-    cols = np.round((lons_sup - x_min) / x_res).astype(int)
-    rows = np.round((lats_sup - y_max) / y_res).astype(int)
-
-    valid_mask = (rows >= 0) & (rows < nrows) & (cols >= 0) & (cols < ncols)
 
     # Read the DEM a block of scan lines at a time, each only over the window its points
     # fall in: indexing points one by one through dask is slow and holds most of the DEM
@@ -646,15 +645,33 @@ def _heights_under(src, lons_sup, lats_sup):
     output = np.full(lons_sup.shape, np.nan)
     for first in range(0, lons_sup.shape[0], DEM_LINES_PER_READ):
         block = slice(first, first + DEM_LINES_PER_READ)
-        inside = valid_mask[block]
-        if not inside.any():
+        # Positions in DEM pixels, whole numbers at pixel centres.
+        across = (lons_sup[block] - transform.c) / transform.a - 0.5
+        down = (lats_sup[block] - transform.f) / transform.e - 0.5
+        on_the_dem = (across >= -0.5) & (across < ncols - 0.5) & (down >= -0.5) & (down < nrows - 0.5)
+        if not on_the_dem.any():
             continue
-        block_rows, block_cols = rows[block][inside], cols[block][inside]
-        top, left = block_rows.min(), block_cols.min()
-        window = src.isel(y=slice(top, block_rows.max() + 1), x=slice(left, block_cols.max() + 1)).values
-        values = output[block]
-        values[inside] = window[block_rows - top, block_cols - left]
-        output[block] = values
+        if not on_the_dem.all():
+            # Off the DEM, look anywhere on it, so as not to widen the window read.
+            across = np.where(on_the_dem, across, across[on_the_dem][0])
+            down = np.where(on_the_dem, down, down[on_the_dem][0])
+        np.clip(across, 0, ncols - 1, out=across)
+        np.clip(down, 0, nrows - 1, out=down)
+        left, top = across.astype(np.int32), down.astype(np.int32)
+        across -= left
+        down -= top
+        row0, col0 = top.min(), left.min()
+        window = src.isel(y=slice(row0, min(top.max() + 2, nrows)),
+                          x=slice(col0, min(left.max() + 2, ncols))).values
+        top -= row0
+        left -= col0
+        right = np.minimum(left + 1, window.shape[1] - 1)
+        bottom = np.minimum(top + 1, window.shape[0] - 1)
+        upper = window[top, left] + across * (window[top, right] - window[top, left].astype(np.float64))
+        lower = window[bottom, left] + across * (window[bottom, right] - window[bottom, left].astype(np.float64))
+        heights = upper + down * (lower - upper)
+        heights[~on_the_dem] = np.nan
+        output[block] = heights
 
     return output
 

@@ -298,6 +298,10 @@ def reference_gcp_lonlats(reference_image_path, cache_dir=None):
     # reads a half-written file.
     with tempfile.NamedTemporaryFile(dir=cache_dir, suffix=".npz", delete=False) as unfinished:
         np.savez(unfinished, lonlats=lonlats, reference=str(reference.resolve()))
+    # A temporary file is made private; the kept one is for whoever shares the cache.
+    umask = os.umask(0)
+    os.umask(umask)
+    os.chmod(unfinished.name, 0o666 & ~umask)
     os.replace(unfinished.name, kept)
     return lonlats
 

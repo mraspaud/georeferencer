@@ -141,3 +141,20 @@ def test_a_gcp_is_placed_at_the_right_pixel_past_missing_geolocation():
 
     assert coords == [tuple(int(i) for i in np.unravel_index(np.nanargmin((lons - 13.0) ** 2 + (lats - 47.0) ** 2),
                                                              lons.shape))]
+
+
+def test_the_kept_gcps_can_be_read_by_whoever_shares_the_cache(tmp_path):
+    """The kept file gets the permissions the umask gives any new file, not a private one."""
+    import os
+
+    from georeferencer.georeferencer import reference_gcp_lonlats
+
+    a_reference(tmp_path / "reference.tif")
+    umask = os.umask(0o022)
+    try:
+        reference_gcp_lonlats(tmp_path / "reference.tif", cache_dir=tmp_path / "cache")
+    finally:
+        os.umask(umask)
+
+    (kept,) = (tmp_path / "cache").iterdir()
+    assert kept.stat().st_mode & 0o777 == 0o644

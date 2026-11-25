@@ -6,6 +6,9 @@ displacement between a swath image and a reference image.
 """
 
 import logging
+import os
+import tempfile
+from pathlib import Path
 from typing import NamedTuple
 
 import dask.array as da
@@ -295,6 +298,40 @@ def gcp_lonlats_of_reference(reference_image_path, lines_per_read=512):
     gcps = np.array(gcp_gen.thin_gcp_candidates(variance, gcp_gen.get_gcp_candidates(variance, 3), 11))
     lons, lats = gcp_to_lonlat(gcps[:, 1], gcps[:, 0], transform)
     return np.column_stack([lons, lats])
+
+
+#: Bumped whenever the GCPs found for a reference image change, so kept ones are found anew.
+GCP_DATABASE_VERSION = 1
+
+
+def reference_gcp_lonlats(reference_image_path, cache_dir=None):
+    """Return the lon/lats of a reference image's GCPs, found on first use and kept.
+
+    They are kept in *cache_dir*, or else in ``GEOREFERENCER_CACHE_DIR``, or else in
+    georeferencer's directory of the user's cache. They are kept under the reference
+    image's name, size and modification time, so a reference written in place of
+    another is searched again; reading a checksum of the whole image would cost a good
+    part of what keeping its GCPs saves.
+    """
+    reference = Path(reference_image_path)
+    if cache_dir is None:
+        cache_dir = os.environ.get("GEOREFERENCER_CACHE_DIR") or (
+            Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "georeferencer")
+    cache_dir = Path(cache_dir)
+    stat = reference.stat()
+    kept = cache_dir / f"{reference.stem}-{stat.st_size}-{stat.st_mtime_ns}-gcps-v{GCP_DATABASE_VERSION}.npz"
+    if kept.exists():
+        with np.load(kept) as stored:
+            return stored["lonlats"]
+
+    lonlats = gcp_lonlats_of_reference(reference)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    # Written beside and then moved into place, so a pass running alongside never
+    # reads a half-written file.
+    with tempfile.NamedTemporaryFile(dir=cache_dir, suffix=".npz", delete=False) as unfinished:
+        np.savez(unfinished, lonlats=lonlats, reference=str(reference.resolve()))
+    os.replace(unfinished.name, kept)
+    return lonlats
 
 
 def displacement_scatter(points, displacements):

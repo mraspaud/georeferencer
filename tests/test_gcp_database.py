@@ -40,3 +40,63 @@ def test_the_gcps_found_strip_by_strip_are_those_of_the_whole_reference(tmp_path
     assert len(found) > 20
     np.testing.assert_allclose(found[np.lexsort(found.T)],
                                np.column_stack([lons, lats])[np.lexsort((lons, lats))], rtol=0, atol=1e-9)
+
+
+def counting_searches(monkeypatch):
+    """Count the searches of a whole reference for its GCPs."""
+    import georeferencer.georeferencer as georef
+
+    searches = []
+    search = georef.gcp_lonlats_of_reference
+
+    def counted(path, **kwargs):
+        searches.append(path)
+        return search(path, **kwargs)
+
+    monkeypatch.setattr(georef, "gcp_lonlats_of_reference", counted)
+    return searches
+
+
+def test_a_references_gcps_are_found_once_and_read_back_afterwards(tmp_path, monkeypatch):
+    """The first pass matched against a reference pays for its GCPs; every later one reads them."""
+    from georeferencer.georeferencer import reference_gcp_lonlats
+
+    a_reference(tmp_path / "reference.tif")
+    searches = counting_searches(monkeypatch)
+
+    first = reference_gcp_lonlats(tmp_path / "reference.tif", cache_dir=tmp_path / "cache")
+    again = reference_gcp_lonlats(tmp_path / "reference.tif", cache_dir=tmp_path / "cache")
+
+    assert len(searches) == 1
+    np.testing.assert_array_equal(first, again)
+
+
+def test_a_changed_reference_is_searched_again(tmp_path, monkeypatch):
+    """GCPs kept for a reference are not used for another one written in its place."""
+    import os
+
+    from georeferencer.georeferencer import gcp_lonlats_of_reference, reference_gcp_lonlats
+
+    a_reference(tmp_path / "reference.tif", seed=3)
+    reference_gcp_lonlats(tmp_path / "reference.tif", cache_dir=tmp_path / "cache")
+    a_reference(tmp_path / "reference.tif", seed=4)
+    stat = os.stat(tmp_path / "reference.tif")
+    os.utime(tmp_path / "reference.tif", ns=(stat.st_atime_ns, stat.st_mtime_ns + 10**9))
+    searches = counting_searches(monkeypatch)
+
+    found = reference_gcp_lonlats(tmp_path / "reference.tif", cache_dir=tmp_path / "cache")
+
+    assert len(searches) == 1
+    np.testing.assert_array_equal(found, gcp_lonlats_of_reference(tmp_path / "reference.tif"))
+
+
+def test_the_gcps_are_kept_where_the_environment_says(tmp_path, monkeypatch):
+    """Without a directory given, they are kept in GEOREFERENCER_CACHE_DIR."""
+    from georeferencer.georeferencer import reference_gcp_lonlats
+
+    a_reference(tmp_path / "reference.tif")
+    monkeypatch.setenv("GEOREFERENCER_CACHE_DIR", str(tmp_path / "kept"))
+
+    reference_gcp_lonlats(tmp_path / "reference.tif")
+
+    assert len(list((tmp_path / "kept").iterdir())) == 1

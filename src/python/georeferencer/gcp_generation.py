@@ -108,19 +108,23 @@ def variance_on_reduced_grid(matrix, step=8, box_size=48):
     """
     height, width = matrix.shape
     down, across = height // step, width // step
-    blocks = box_size // step
 
     in_blocks = matrix[:down * step, :across * step].reshape(down, step, across, step)
-    mean = in_blocks.mean(axis=(1, 3))
-    mean_of_squares = (in_blocks ** 2).mean(axis=(1, 3))
+    return variance_from_block_moments(in_blocks.mean(axis=(1, 3)), (in_blocks ** 2).mean(axis=(1, 3)),
+                                       box_size // step,
+                                       (height - box_size) // step + 1, (width - box_size) // step + 1)
+
+
+def variance_from_block_moments(mean, mean_of_squares, blocks, down, across):
+    """Return the variance of every window of *blocks* x *blocks* blocks, *down* by *across* of them.
+
+    *mean* and *mean_of_squares* are those of each block; a window's variance is the
+    mean of its blocks' means of squares less the square of the mean of their means.
+    """
     variance = (ndimage.uniform_filter(mean_of_squares, blocks)
                 - ndimage.uniform_filter(mean, blocks) ** 2)
-
-    centre_of_the_first_window = blocks // 2
-    return variance[centre_of_the_first_window:
-                    centre_of_the_first_window + (height - box_size) // step + 1,
-                    centre_of_the_first_window:
-                    centre_of_the_first_window + (width - box_size) // step + 1]
+    first = blocks // 2
+    return variance[first:first + down, first:first + across]
 
 
 def get_gcp_candidates(variance_array, group_size=3):

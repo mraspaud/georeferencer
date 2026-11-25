@@ -261,6 +261,42 @@ def _generate_gcps(ref_image):
     )
 
 
+def gcp_lonlats_of_reference(reference_image_path, lines_per_read=512):
+    """Return the lon/lats of every ground control point a reference image offers.
+
+    The GCPs depend on the reference image alone, so they can be found once for the
+    whole image instead of for every pass. Its first band is read a strip at a time,
+    averaged to about 1 km as the matching uses it, and only the mean and the mean of
+    squares of each 8 x 8 block are kept: the 48-wide variance windows sampled every
+    eighth pixel are made of whole blocks, so the variance grid of the whole image is
+    had from them without holding the image. Candidates are then chosen, thinned and
+    recovered on that grid as for a single pass.
+    """
+    import rasterio
+    from rasterio.windows import Window
+
+    step, window = 8, 48
+    with rasterio.open(reference_image_path) as src:
+        height, width = (src.height // (2 * step)) * 2 * step, (src.width // (2 * step)) * 2 * step
+        lines_per_read = max(2 * step, lines_per_read // (2 * step) * 2 * step)
+        means, means_of_squares = [], []
+        for first in range(0, height, lines_per_read):
+            raw = src.read(1, window=Window(0, first, width, min(lines_per_read, height - first)))
+            lines = raw.shape[0]
+            kilometre = raw.reshape(lines // 2, 2, width // 2, 2).sum(axis=(1, 3), dtype=np.uint16) / (4 * 2.55)
+            blocks = kilometre.reshape(lines // (2 * step), step, width // (2 * step), step)
+            means.append(blocks.mean(axis=(1, 3)))
+            means_of_squares.append((blocks ** 2).mean(axis=(1, 3)))
+        transform = src.transform
+
+    variance = gcp_gen.variance_from_block_moments(np.vstack(means), np.vstack(means_of_squares), window // step,
+                                                   (height // 2 - window) // step + 1,
+                                                   (width // 2 - window) // step + 1)
+    gcps = np.array(gcp_gen.thin_gcp_candidates(variance, gcp_gen.get_gcp_candidates(variance, 3), 11))
+    lons, lats = gcp_to_lonlat(gcps[:, 1], gcps[:, 0], transform)
+    return np.column_stack([lons, lats])
+
+
 def displacement_scatter(points, displacements):
     """Return how much of a displacement field no smooth geometry explains, in pixels.
 

@@ -254,7 +254,7 @@ def gcp_lonlats_of_reference(reference_image_path, lines_per_read=512):
         for first in range(0, height, lines_per_read):
             raw = src.read(1, window=Window(0, first, width, min(lines_per_read, height - first)))
             lines = raw.shape[0]
-            kilometre = raw.reshape(lines // 2, 2, width // 2, 2).sum(axis=(1, 3), dtype=np.uint16) / (4 * 2.55)
+            kilometre = gcp_gen.downsample_2x2(raw) / 2.55
             blocks = kilometre.reshape(lines // (2 * step), step, width // (2 * step), step)
             means.append(blocks.mean(axis=(1, 3)))
             means_of_squares.append((blocks ** 2).mean(axis=(1, 3)))

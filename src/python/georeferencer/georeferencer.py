@@ -588,18 +588,31 @@ def _orthocorrect_line(elev, dists, tanz, swath_lats_i, swath_lons_i, lon_sup, l
         out_lon[j] = lon_sup[best_idx]
 
 
+def _distances_along_the_lines(lons, lats):
+    """Return each point's distance from the start of its line, along the line, in metres.
+
+    The points are a quarter of a pixel apart, so the straight line between neighbours
+    on the WGS84 ellipsoid is the geodesic to well under a millimetre over a whole scan
+    line, at a small fraction of the cost of solving for geodesics.
+    """
+    lon, lat = np.deg2rad(lons), np.deg2rad(lats)
+    sin_lat = np.sin(lat)
+    normal = _geod.a / np.sqrt(1 - _geod.es * sin_lat ** 2)
+    x = normal * np.cos(lat) * np.cos(lon)
+    y = normal * np.cos(lat) * np.sin(lon)
+    z = normal * (1 - _geod.es) * sin_lat
+    steps = np.sqrt(np.diff(x, axis=-1) ** 2 + np.diff(y, axis=-1) ** 2 + np.diff(z, axis=-1) ** 2)
+    distances = np.zeros(np.shape(lons), dtype=np.float64)
+    distances[..., 1:] = np.cumsum(steps, axis=-1)
+    return distances
+
+
 def _process_scanline(i, dem_swath, lons, lats, swath_lats, swath_lons, sat_zen):
     elev = dem_swath[i]
     lon_sup = lons[i]
     lat_sup = lats[i]
 
-    # Calculate distances
-    lon0, lat0 = lon_sup[:-1], lat_sup[:-1]
-    lon1, lat1 = lon_sup[1:], lat_sup[1:]
-    _, _, seg = _geod.inv(lon0, lat0, lon1, lat1)
-
-    dists = np.zeros(len(seg) + 1, dtype=np.float64)
-    dists[1:] = np.cumsum(seg)
+    dists = _distances_along_the_lines(lon_sup, lat_sup)
 
     # Calculate tan of view angles
     tanz = np.tan(np.deg2rad(sat_zen[i]))
@@ -761,13 +774,7 @@ def _process_scanline_py(i, dem_swath, lons, lats, swath_lats, swath_lons, sat_z
     lon_sup = lons[i]
     lat_sup = lats[i]
 
-    # Calculate distances
-    lon0, lat0 = lon_sup[:-1], lat_sup[:-1]
-    lon1, lat1 = lon_sup[1:], lat_sup[1:]
-    _, _, seg = _geod.inv(lon0, lat0, lon1, lat1)
-
-    dists = np.zeros(len(seg) + 1, dtype=np.float64)
-    dists[1:] = np.cumsum(seg)
+    dists = _distances_along_the_lines(lon_sup, lat_sup)
 
     # Calculate tan of view angles
     tanz = np.tan(np.deg2rad(sat_zen[i]))

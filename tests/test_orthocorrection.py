@@ -173,3 +173,26 @@ def test_the_orthocorrection_does_not_depend_on_how_much_of_the_pass_it_holds_at
     assert np.mean(in_pieces[1] != lons) > 0.05
     np.testing.assert_array_equal(in_pieces[0], whole[0])
     np.testing.assert_array_equal(in_pieces[1], whole[1])
+
+
+def test_the_distance_along_a_scan_line_is_the_ground_distance_to_within_a_millimetre():
+    """Each supersampled point's distance from the start of its line, along the line.
+
+    The points are a quarter of a pixel apart, so the straight line between two of them
+    on the ellipsoid is shorter than the geodesic by far less than a millimetre, even
+    added up over a whole scan line.
+    """
+    import geotiepoints as gtp
+    from georeferencer.georeferencer import _distances_along_the_lines
+    from pyproj import Geod
+
+    lons, lats = a_swath_of_lonlats(lines=20)
+    fine = np.arange(0, 2048, 0.25)
+    lons, lats = gtp.SatelliteInterpolator((lons, lats), (np.arange(20), np.arange(2048)),
+                                           (np.arange(20), fine), 1, 3).interpolate()
+    _, _, steps = Geod(ellps="WGS84").inv(lons[:, :-1], lats[:, :-1], lons[:, 1:], lats[:, 1:])
+    expected = np.concatenate([np.zeros((20, 1)), np.cumsum(steps, axis=1)], axis=1)
+
+    found = _distances_along_the_lines(lons, lats)
+
+    np.testing.assert_allclose(found, expected, rtol=0, atol=1e-3)

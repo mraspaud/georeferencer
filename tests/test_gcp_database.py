@@ -1,6 +1,9 @@
 """The ground control points of a whole reference image, found once and kept."""
 
+import sys
+
 import numpy as np
+import pytest
 
 
 def a_reference(path, height=640, width=960, seed=3):
@@ -90,16 +93,17 @@ def test_a_changed_reference_is_searched_again(tmp_path, monkeypatch):
     np.testing.assert_array_equal(found, gcp_lonlats_of_reference(tmp_path / "reference.tif"))
 
 
-def test_the_gcps_are_kept_where_the_environment_says(tmp_path, monkeypatch):
-    """Without a directory given, they are kept in GEOREFERENCER_CACHE_DIR."""
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="XDG directories are the Linux convention")
+def test_the_gcps_are_kept_in_the_users_standard_cache_directory(tmp_path, monkeypatch):
+    """Without a directory given, they are kept in georeferencer's directory of the XDG cache."""
     from georeferencer.georeferencer import reference_gcp_lonlats
 
     a_reference(tmp_path / "reference.tif")
-    monkeypatch.setenv("GEOREFERENCER_CACHE_DIR", str(tmp_path / "kept"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
 
     reference_gcp_lonlats(tmp_path / "reference.tif")
 
-    assert len(list((tmp_path / "kept").iterdir())) == 1
+    assert len(list((tmp_path / "xdg" / "georeferencer").iterdir())) == 1
 
 
 def test_a_pass_takes_the_kept_gcps_it_sees_at_the_swath_pixel_nearest_each(tmp_path):

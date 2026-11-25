@@ -13,6 +13,7 @@ from typing import NamedTuple
 
 import dask.array as da
 import numpy as np
+import platformdirs
 import rioxarray
 import xarray as xr
 from numba import njit
@@ -292,16 +293,17 @@ def reference_gcp_lonlats(reference_image_path, cache_dir=None):
     They are kept as georeferencer's reference data: the GCPs on the variance grid,
     with the grid, written and read with the reference data helpers.
 
-    They are kept in *cache_dir*, or else in ``GEOREFERENCER_CACHE_DIR``, or else in
-    georeferencer's directory of the user's cache. They are kept under the reference
-    image's name, size and modification time, so a reference written in place of
-    another is searched again; reading a checksum of the whole image would cost a good
-    part of what keeping its GCPs saves.
+    They are kept in *cache_dir*, or else in georeferencer's directory of the user's
+    standard cache: ``$XDG_CACHE_HOME/georeferencer`` on Linux, ``~/.cache/georeferencer``
+    when that is not set, and the platform's own cache directory elsewhere.
+
+    They are kept under the reference image's name, size and modification time, so a
+    reference written in place of another is searched again; reading a checksum of the
+    whole image would cost a good part of what keeping its GCPs saves.
     """
     reference = Path(reference_image_path)
     if cache_dir is None:
-        cache_dir = os.environ.get("GEOREFERENCER_CACHE_DIR") or (
-            Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "georeferencer")
+        cache_dir = platformdirs.user_cache_dir("georeferencer")
     cache_dir = Path(cache_dir)
     stat = reference.stat()
     kept = cache_dir / f"{reference.stem}-{stat.st_size}-{stat.st_mtime_ns}-gcps-v{GCP_DATABASE_VERSION}.npz"

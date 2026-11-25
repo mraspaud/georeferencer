@@ -26,6 +26,7 @@ dependencies = [
     "scipy>=1.15.2",
     "pyorbital>1.10.0",
     "numba>=0.61.2",
+    "platformdirs>=4.0",
     "python-geotiepoints>=1.7.5",
     "pyshp>=2.3.0",
 ]

@@ -47,13 +47,13 @@ def counting_searches(monkeypatch):
     import georeferencer.georeferencer as georef
 
     searches = []
-    search = georef.gcp_lonlats_of_reference
+    search = georef.gcps_of_reference
 
     def counted(path, **kwargs):
         searches.append(path)
         return search(path, **kwargs)
 
-    monkeypatch.setattr(georef, "gcp_lonlats_of_reference", counted)
+    monkeypatch.setattr(georef, "gcps_of_reference", counted)
     return searches
 
 
@@ -158,3 +158,22 @@ def test_the_kept_gcps_can_be_read_by_whoever_shares_the_cache(tmp_path):
 
     (kept,) = (tmp_path / "cache").iterdir()
     assert kept.stat().st_mode & 0o777 == 0o644
+
+
+def test_the_gcps_are_kept_with_their_variance_grid_as_reference_data(tmp_path):
+    """The kept file is georeferencer's reference data: the GCPs on the variance grid, and the grid.
+
+    It is written and read with the reference data helpers, so it can be looked into,
+    or made elsewhere, with them.
+    """
+    import georeferencer.gcp_generation as gcp_gen
+    from georeferencer.georeferencer import gcps_of_reference, reference_gcp_lonlats
+
+    a_reference(tmp_path / "reference.tif")
+    gcps, variance = gcps_of_reference(tmp_path / "reference.tif")
+
+    reference_gcp_lonlats(tmp_path / "reference.tif", cache_dir=tmp_path / "cache")
+
+    (kept,) = (tmp_path / "cache").iterdir()
+    np.testing.assert_array_equal(gcp_gen.get_gcp_points_from_file(kept), gcps)
+    np.testing.assert_array_equal(gcp_gen.get_variance_array_from_file(kept), variance)

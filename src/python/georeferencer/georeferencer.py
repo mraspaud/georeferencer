@@ -232,8 +232,8 @@ def _reproject_to_swath(ref_image, calibrated_ds):
     ).astype(np.float32)
 
 
-def gcp_lonlats_of_reference(reference_image_path, lines_per_read=512):
-    """Return the lon/lats of every ground control point a reference image offers.
+def gcps_of_reference(reference_image_path, lines_per_read=512):
+    """Return every ground control point a reference image offers, on its variance grid, and the grid.
 
     The GCPs depend on the reference image alone, so they can be found once for the
     whole image instead of for every pass. Its first band is read a strip at a time,
@@ -258,22 +258,39 @@ def gcp_lonlats_of_reference(reference_image_path, lines_per_read=512):
             blocks = kilometre.reshape(lines // (2 * step), step, width // (2 * step), step)
             means.append(blocks.mean(axis=(1, 3)))
             means_of_squares.append((blocks ** 2).mean(axis=(1, 3)))
-        transform = src.transform
 
     variance = gcp_gen.variance_from_block_moments(np.vstack(means), np.vstack(means_of_squares), window // step,
                                                    (height // 2 - window) // step + 1,
                                                    (width // 2 - window) // step + 1)
     gcps = np.array(gcp_gen.thin_gcp_candidates(variance, gcp_gen.get_gcp_candidates(variance, 3), 11))
+    return gcps, variance.astype(np.float32)
+
+
+def gcp_lonlats_of_reference(reference_image_path, lines_per_read=512):
+    """Return the lon/lats of every ground control point a reference image offers."""
+    return _lonlats_on_the_variance_grid(
+        gcps_of_reference(reference_image_path, lines_per_read=lines_per_read)[0], reference_image_path)
+
+
+def _lonlats_on_the_variance_grid(gcps, reference_image_path):
+    """Return the lon/lats of GCPs given on a reference image's variance grid."""
+    import rasterio
+
+    with rasterio.open(reference_image_path) as src:
+        transform = src.transform
     lons, lats = gcp_to_lonlat(gcps[:, 1], gcps[:, 0], transform)
     return np.column_stack([lons, lats])
 
 
 #: Bumped whenever the GCPs found for a reference image change, so kept ones are found anew.
-GCP_DATABASE_VERSION = 1
+GCP_DATABASE_VERSION = 2
 
 
 def reference_gcp_lonlats(reference_image_path, cache_dir=None):
     """Return the lon/lats of a reference image's GCPs, found on first use and kept.
+
+    They are kept as georeferencer's reference data: the GCPs on the variance grid,
+    with the grid, written and read with the reference data helpers.
 
     They are kept in *cache_dir*, or else in ``GEOREFERENCER_CACHE_DIR``, or else in
     georeferencer's directory of the user's cache. They are kept under the reference
@@ -289,21 +306,21 @@ def reference_gcp_lonlats(reference_image_path, cache_dir=None):
     stat = reference.stat()
     kept = cache_dir / f"{reference.stem}-{stat.st_size}-{stat.st_mtime_ns}-gcps-v{GCP_DATABASE_VERSION}.npz"
     if kept.exists():
-        with np.load(kept) as stored:
-            return stored["lonlats"]
+        return _lonlats_on_the_variance_grid(gcp_gen.get_gcp_points_from_file(kept), reference)
 
-    lonlats = gcp_lonlats_of_reference(reference)
+    gcps, variance = gcps_of_reference(reference)
     cache_dir.mkdir(parents=True, exist_ok=True)
     # Written beside and then moved into place, so a pass running alongside never
     # reads a half-written file.
     with tempfile.NamedTemporaryFile(dir=cache_dir, suffix=".npz", delete=False) as unfinished:
-        np.savez(unfinished, lonlats=lonlats, reference=str(reference.resolve()))
+        pass
+    gcp_gen.save_reference_data(gcps, variance, unfinished.name)
     # A temporary file is made private; the kept one is for whoever shares the cache.
     umask = os.umask(0)
     os.umask(umask)
     os.chmod(unfinished.name, 0o666 & ~umask)
     os.replace(unfinished.name, kept)
-    return lonlats
+    return _lonlats_on_the_variance_grid(gcps, reference)
 
 
 def displacement_scatter(points, displacements):

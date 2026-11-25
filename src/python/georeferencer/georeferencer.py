@@ -104,16 +104,18 @@ def gcp_to_lonlat(gcp_x, gcp_y, geo_transform):
     return xp, yp
 
 
-def translate_gcp_to_swath_coordinates(gcp_array, calibrated_ds, geo_transform):
-    """Convert GCP pixel coordinates into swath image coordinates based on latitude and longitude values.
+def place_gcps_in_swath(gcp_lonlats, calibrated_ds):
+    """Place each GCP the swath sees at the swath pixel whose lon/lat is nearest its own.
+
+    GCPs outside the swath's lon/lat box are left out, and so are those landing within
+    twelve pixels of the swath's edge.
 
     Args:
-        gcp_array (array-like): Array of GCP (x, y) pixel coordinates.
+        gcp_lonlats (array-like): The GCPs' (lon, lat), one per row.
         calibrated_ds (xarray.Dataset): Calibrated swath dataset containing longitude and latitude data.
-        geo_transform (Affine): Geotransform matrix for coordinate conversion.
 
     Returns:
-        (gcp coords, gcp lonlats): valid GCPs that fall within the swath image bounds, image coords and lonlats.
+        (gcp coords, gcp lonlats): the GCPs placed, as (line, sample) and as (lon, lat).
     """
     if "tc_longitude" in calibrated_ds and "tc_latitude" in calibrated_ds:
         lons = calibrated_ds["tc_longitude"].values
@@ -122,38 +124,24 @@ def translate_gcp_to_swath_coordinates(gcp_array, calibrated_ds, geo_transform):
         lons = calibrated_ds["longitude"].values
         lats = calibrated_ds["latitude"].values
 
-    image_shape = lons.shape
-    lon_lat_pairs = np.column_stack((lons.ravel(), lats.ravel()))
-    valid_mask = ~np.isnan(lon_lat_pairs).any(axis=1)
-    valid_lon_lat_pairs = lon_lat_pairs[valid_mask]
+    gcp_lonlats = np.asarray(gcp_lonlats, dtype=float)
+    seen = ((gcp_lonlats[:, 0] >= np.nanmin(lons)) & (gcp_lonlats[:, 0] <= np.nanmax(lons))
+            & (gcp_lonlats[:, 1] >= np.nanmin(lats)) & (gcp_lonlats[:, 1] <= np.nanmax(lats)))
+    gcp_lonlats = gcp_lonlats[seen]
 
     # TODO change to another KDTree
-    source_geo_def = cKDTree(valid_lon_lat_pairs)
+    pixels = np.column_stack((lons.ravel(), lats.ravel()))
+    valid = ~np.isnan(pixels).any(axis=1)
+    # An unbalanced tree is built several times faster and finds the same neighbours.
+    tree = cKDTree(pixels[valid], balanced_tree=False, compact_nodes=False)
+    _, nearest = tree.query(gcp_lonlats)
+    lines, samples = np.unravel_index(np.flatnonzero(valid)[nearest], lons.shape)
 
-    min_lon = np.nanmin(lons)
-    max_lon = np.nanmax(lons)
-    min_lat = np.nanmin(lats)
-    max_lat = np.nanmax(lats)
-
-    nr_of_valid_gcps = 0
-    swath_cords = []
-    gcp_lonlats = []
-    N = 24
-    for gcp in gcp_array:
-        gcp_lon, gcp_lat = gcp_to_lonlat(gcp[1], gcp[0], geo_transform)
-
-        if gcp_lon < min_lon or gcp_lon > max_lon or gcp_lat < min_lat or gcp_lat > max_lat:
-            continue
-
-        distance, index = source_geo_def.query((gcp_lon, gcp_lat))
-        swath_index = np.unravel_index(index, image_shape)
-        x, y = swath_index
-        if N // 2 <= x < image_shape[0] - N // 2 and N // 2 <= y < image_shape[1] - N // 2:
-            swath_cords.append(swath_index)
-            nr_of_valid_gcps += 1
-            gcp_lonlats.append((gcp_lon, gcp_lat))
-
-    return swath_cords, gcp_lonlats
+    margin = 24 // 2
+    clear = ((lines >= margin) & (lines < lons.shape[0] - margin)
+             & (samples >= margin) & (samples < lons.shape[1] - margin))
+    swath_coords = [(int(line), int(sample)) for line, sample in zip(lines[clear], samples[clear], strict=True)]
+    return swath_coords, [tuple(lonlat) for lonlat in gcp_lonlats[clear]]
 
 
 def reproject_reference_into_swath(
@@ -242,26 +230,6 @@ def _reproject_to_swath(ref_image, calibrated_ds):
         lons,
         lats,
     ).astype(np.float32)
-
-
-def _generate_gcps(ref_image):
-    """Generates ground control point candidates based on variance analysis."""
-    STEP = 8
-    WINDOW_SIZE = 48
-    THINNING_RADIUS = 11
-    GROUP_SIZE = 3
-
-    variance_array = gcp_gen.get_variance_array(
-        ref_image.coarsen(x=2, y=2, boundary="trim").mean().values,
-        STEP,
-        WINDOW_SIZE,
-    )
-
-    return gcp_gen.thin_gcp_candidates(
-        variance_array,
-        gcp_gen.get_gcp_candidates(variance_array, GROUP_SIZE),
-        THINNING_RADIUS,
-    )
 
 
 def gcp_lonlats_of_reference(reference_image_path, lines_per_read=512):
@@ -553,10 +521,8 @@ def measure_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_
         calibrated_ds = orthocorrection(calibrated_ds, sat_zen, dem_path)
     swath = _build_swath_image(calibrated_ds, sun_zen)
     ref_image = _load_reference_image(reference_image_path, calibrated_ds)
-    geo_transform = ref_image.rio.transform()
     target_area = _reproject_to_swath(ref_image, calibrated_ds)
-    gcp_points = _generate_gcps(ref_image)
-    swath_coords, gcp_lonlats = translate_gcp_to_swath_coordinates(gcp_points, calibrated_ds, geo_transform)
+    swath_coords, gcp_lonlats = place_gcps_in_swath(reference_gcp_lonlats(reference_image_path), calibrated_ds)
     gcps, valid_gcp_lonlats, valid_swath_coords, carried = find_control_points(
         swath_coords, gcp_lonlats, swath, np.nan_to_num(target_area.values, nan=0.0)
     )

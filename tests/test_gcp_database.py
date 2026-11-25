@@ -100,3 +100,44 @@ def test_the_gcps_are_kept_where_the_environment_says(tmp_path, monkeypatch):
     reference_gcp_lonlats(tmp_path / "reference.tif")
 
     assert len(list((tmp_path / "kept").iterdir())) == 1
+
+
+def test_a_pass_takes_the_kept_gcps_it_sees_at_the_swath_pixel_nearest_each(tmp_path):
+    """Each GCP in the swath goes to the pixel whose lon/lat is nearest its own.
+
+    Those outside the swath's lon/lat box are left out, and so are those that land
+    within twelve pixels of the swath's edge, where a matching block would not fit.
+    """
+    import xarray as xr
+    from georeferencer.georeferencer import place_gcps_in_swath
+
+    lines, samples = 200, 300
+    lons, lats = np.meshgrid(np.linspace(10.0, 16.0, samples), np.linspace(50.0, 46.0, lines))
+    swath = xr.Dataset({"longitude": (("y", "x"), lons), "latitude": (("y", "x"), lats)})
+    rng = np.random.default_rng(5)
+    gcps = np.column_stack([rng.uniform(8.0, 18.0, 400), rng.uniform(44.0, 52.0, 400)])
+
+    coords, lonlats = place_gcps_in_swath(gcps, swath)
+
+    inside = (gcps[:, 0] >= 10.0) & (gcps[:, 0] <= 16.0) & (gcps[:, 1] >= 46.0) & (gcps[:, 1] <= 50.0)
+    nearest = [np.unravel_index(np.argmin((lons - lon) ** 2 + (lats - lat) ** 2), lons.shape)
+               for lon, lat in gcps[inside]]
+    clear = [12 <= y < lines - 12 and 12 <= x < samples - 12 for y, x in nearest]
+    assert coords == [(int(y), int(x)) for (y, x), ok in zip(nearest, clear, strict=True) if ok]
+    assert lonlats == [tuple(lonlat) for lonlat, ok in zip(gcps[inside], clear, strict=True) if ok]
+
+
+def test_a_gcp_is_placed_at_the_right_pixel_past_missing_geolocation():
+    """Scan lines without geolocation do not shift where the GCPs after them are placed."""
+    import xarray as xr
+    from georeferencer.georeferencer import place_gcps_in_swath
+
+    lines, samples = 200, 300
+    lons, lats = np.meshgrid(np.linspace(10.0, 16.0, samples), np.linspace(50.0, 46.0, lines))
+    lons[:20], lats[:20] = np.nan, np.nan
+    swath = xr.Dataset({"longitude": (("y", "x"), lons), "latitude": (("y", "x"), lats)})
+
+    coords, _ = place_gcps_in_swath(np.array([[13.0, 47.0]]), swath)
+
+    assert coords == [tuple(int(i) for i in np.unravel_index(np.nanargmin((lons - 13.0) ** 2 + (lats - 47.0) ** 2),
+                                                             lons.shape))]

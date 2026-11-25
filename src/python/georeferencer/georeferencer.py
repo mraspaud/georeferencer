@@ -6,9 +6,6 @@ displacement between a swath image and a reference image.
 """
 
 import logging
-import os
-from concurrent.futures import ThreadPoolExecutor
-from functools import partial
 from typing import NamedTuple
 
 import dask.array as da
@@ -61,7 +58,7 @@ def subset_from_bounds(buffer, dataset, max_lat, max_lon, min_lat, min_lon):
     return subset
 
 
-def open_subset_tif(filepath, min_lat, max_lat, min_lon, max_lon, buffer=5):
+def open_subset_tif(filepath, min_lat, max_lat, min_lon, max_lon, buffer=5, chunks=512):
     """Open a subset of a GeoTIFF file based on latitude and longitude bounds.
 
     This function extracts a subset of a GeoTIFF file by defining a bounding box
@@ -74,11 +71,12 @@ def open_subset_tif(filepath, min_lat, max_lat, min_lon, max_lon, buffer=5):
         min_lon (float): Minimum longitude for the subset.
         max_lon (float): Maximum longitude for the subset.
         buffer (int, optional): Buffer (in degrees) to extend the bounding box. Default is 5.
+        chunks (int or None, optional): Dask chunk size; None opens the file lazily without dask.
 
     Returns:
-        xarray.DataArray: A Dask-backed xarray DataArray containing the subset of the image.
+        xarray.DataArray: A lazily read xarray DataArray containing the subset of the image.
     """
-    dataset = rioxarray.open_rasterio(filepath, engine="rasterio", chunks=512)
+    dataset = rioxarray.open_rasterio(filepath, engine="rasterio", chunks=chunks)
     subset = subset_from_bounds(buffer, dataset, max_lat, max_lon, min_lat, min_lon)
 
     return subset
@@ -629,8 +627,10 @@ def _process_scanline(i, dem_swath, lons, lats, swath_lats, swath_lons, sat_zen)
 DEM_LINES_PER_READ = 256
 
 #: How many scan lines are orthocorrected at a time. Each is corrected on its own, so the
-#: pass is taken in blocks rather than holding its four-times-finer grid whole.
-ORTHOCORRECTION_LINES_PER_BLOCK = 256
+#: pass is taken in blocks rather than holding its four-times-finer grid whole. The blocks
+#: run side by side, one per dask worker, so they are kept small enough for a few of them
+#: together to hold no more than one large block did.
+ORTHOCORRECTION_LINES_PER_BLOCK = 32
 
 
 def _get_dem_swath(dem_file_path, min_lats, max_lats, min_lon, max_lon, lons_sup, lats_sup):
@@ -638,8 +638,13 @@ def _get_dem_swath(dem_file_path, min_lats, max_lats, min_lon, max_lon, lons_sup
 
 
 def _dem_subset(dem_file_path, min_lats, max_lats, min_lon, max_lon):
-    """Open, without reading, the part of the DEM around a swath."""
-    return open_subset_tif(dem_file_path, min_lats, max_lats, min_lon, max_lon).squeeze(drop=True)
+    """Open, without reading, the part of the DEM around a swath.
+
+    It is read window by window from within the orthocorrection's own dask tasks, so it
+    is opened without dask: a nested compute would share the scheduler's workers out
+    again inside each task.
+    """
+    return open_subset_tif(dem_file_path, min_lats, max_lats, min_lon, max_lon, chunks=None).squeeze(drop=True)
 
 
 def _heights_under(src, lons_sup, lats_sup):
@@ -689,33 +694,36 @@ def _heights_under(src, lons_sup, lats_sup):
     return output
 
 
-def orthocorrection(calibrated_ds, sat_zen, dem_file_path):
-    """Performs orthocorrection on latitude and longitude based on satellite viewing angles."""
-    swath_lons = np.asarray(calibrated_ds["longitude"])
-    swath_lats = np.asarray(calibrated_ds["latitude"])
-    dem = _dem_subset(dem_file_path, np.min(swath_lats), np.max(swath_lats), np.min(swath_lons), np.max(swath_lons))
-    out_lats = np.full_like(swath_lats, np.nan, dtype=np.float64)
-    out_lons = np.full_like(swath_lons, np.nan, dtype=np.float64)
-    nscan, ncols = swath_lons.shape
+def _orthocorrect_block(swath_lons, swath_lats, sat_zen, dem):
+    """Return the orthocorrected lats and lons of a block of scan lines, stacked."""
+    ncols = swath_lons.shape[1]
+    lons, lats = lonlat_interpolator(swath_lons, swath_lats, np.arange(ncols), np.arange(0, ncols, 0.25))
+    heights = _heights_under(dem, lons, lats)
+    corrected = np.full((2,) + swath_lons.shape, np.nan)
+    for i in range(swath_lons.shape[0]):
+        corrected[0, i], corrected[1, i] = _process_scanline(i, heights, lons, lats, swath_lats, swath_lons, sat_zen)
+    return corrected
 
-    num_workers = int(os.getenv("THREADS", os.cpu_count() or 4))
-    with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        for first in range(0, nscan, ORTHOCORRECTION_LINES_PER_BLOCK):
-            block = slice(first, first + ORTHOCORRECTION_LINES_PER_BLOCK)
-            lons, lats = lonlat_interpolator(swath_lons[block], swath_lats[block],
-                                             np.arange(ncols), np.arange(0, ncols, 0.25))
-            process_func = partial(
-                _process_scanline,
-                dem_swath=_heights_under(dem, lons, lats),
-                lons=lons,
-                lats=lats,
-                swath_lats=swath_lats[block],
-                swath_lons=swath_lons[block],
-                sat_zen=sat_zen[block],
-            )
-            for i, (lat_line, lon_line) in enumerate(executor.map(process_func, range(lons.shape[0]))):
-                out_lats[first + i] = lat_line
-                out_lons[first + i] = lon_line
+
+def orthocorrection(calibrated_ds, sat_zen, dem_file_path):
+    """Performs orthocorrection on latitude and longitude based on satellite viewing angles.
+
+    Each block of scan lines is a dask task, so the blocks are corrected side by side on
+    whichever scheduler, and with however many workers, the processing chain sets up.
+    """
+    swath_lons = np.asarray(calibrated_ds["longitude"], dtype=np.float64)
+    swath_lats = np.asarray(calibrated_ds["latitude"], dtype=np.float64)
+    dem = _dem_subset(dem_file_path, np.min(swath_lats), np.max(swath_lats), np.min(swath_lons), np.max(swath_lons))
+
+    chunks = (ORTHOCORRECTION_LINES_PER_BLOCK, swath_lons.shape[1])
+    lons, lats, zeniths = (da.from_array(np.asarray(values), chunks=chunks)
+                           for values in (swath_lons, swath_lats, sat_zen))
+    corrected = da.map_blocks(_orthocorrect_block, lons, lats, zeniths, dem=dem, new_axis=0,
+                              chunks=((2,),) + lons.chunks, dtype=np.float64,
+                              meta=np.array((), dtype=np.float64))
+    # Each block is written into place as it is done, rather than gathered and joined.
+    out_lats, out_lons = out = np.empty(corrected.shape)
+    da.store(corrected, out, lock=False)
 
     calibrated_ds["tc_latitude"] = (calibrated_ds["latitude"].dims, out_lats)
     calibrated_ds["tc_longitude"] = (calibrated_ds["longitude"].dims, out_lons)

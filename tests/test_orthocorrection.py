@@ -140,18 +140,12 @@ def test_the_supersampled_grid_follows_the_spline_through_every_pixel():
     np.testing.assert_allclose(found_lats, expected_lats, rtol=0, atol=1e-9)
 
 
-def test_the_orthocorrection_does_not_depend_on_how_much_of_the_pass_it_holds_at_once(tmp_path, monkeypatch):
-    """A pass corrected a few scan lines at a time comes out the same as one corrected whole.
-
-    Held whole, the four-times-finer grid of a full pass and the terrain under it take
-    gigabytes; each scan line is corrected on its own, so the pass can be taken in pieces.
-    """
-    import georeferencer.georeferencer as georef
+def a_pass_over_terrain(tmp_path, lines=60):
+    """Return a swath's lon/lats and satellite zeniths, and the path of a rough DEM under it."""
     import rasterio
-    import xarray as xr
     from rasterio.transform import from_origin
 
-    lons, lats = a_swath_of_lonlats(lines=60)
+    lons, lats = a_swath_of_lonlats(lines=lines)
     rng = np.random.default_rng(1)
     terrain = np.clip(np.cumsum(np.cumsum(rng.normal(0, 30, (600, 900)), axis=0), axis=1), 0, 5000).astype("float32")
     dem = tmp_path / "dem.tif"
@@ -159,20 +153,65 @@ def test_the_orthocorrection_does_not_depend_on_how_much_of_the_pass_it_holds_at
                        crs="EPSG:4326", transform=from_origin(0.0, -15.0, 0.05, 0.05)) as out:
         out.write(terrain, 1)
     sat_zen = np.tile(np.abs(np.linspace(-68.0, 68.0, 2048)), (len(lats), 1))
+    return lons, lats, sat_zen, str(dem)
 
-    def corrected():
-        swath = xr.Dataset({"longitude": (("y", "x"), lons), "latitude": (("y", "x"), lats)})
-        result = georef.orthocorrection(swath, sat_zen, str(dem))
-        return result["tc_latitude"].values, result["tc_longitude"].values
+
+def orthocorrected(lons, lats, sat_zen, dem):
+    """Return the orthocorrected lats and lons of a swath."""
+    import georeferencer.georeferencer as georef
+    import xarray as xr
+
+    swath = xr.Dataset({"longitude": (("y", "x"), lons), "latitude": (("y", "x"), lats)})
+    result = georef.orthocorrection(swath, sat_zen, dem)
+    return result["tc_latitude"].values, result["tc_longitude"].values
+
+
+def test_the_orthocorrection_does_not_depend_on_how_much_of_the_pass_it_holds_at_once(tmp_path, monkeypatch):
+    """A pass corrected a few scan lines at a time comes out the same as one corrected whole.
+
+    Held whole, the four-times-finer grid of a full pass and the terrain under it take
+    gigabytes; each scan line is corrected on its own, so the pass can be taken in pieces.
+    """
+    import georeferencer.georeferencer as georef
+
+    lons, lats, sat_zen, dem = a_pass_over_terrain(tmp_path)
 
     monkeypatch.setattr(georef, "ORTHOCORRECTION_LINES_PER_BLOCK", 7)
-    in_pieces = corrected()
+    in_pieces = orthocorrected(lons, lats, sat_zen, dem)
     monkeypatch.setattr(georef, "ORTHOCORRECTION_LINES_PER_BLOCK", 10_000)
-    whole = corrected()
+    whole = orthocorrected(lons, lats, sat_zen, dem)
 
     assert np.mean(in_pieces[1] != lons) > 0.05
     np.testing.assert_array_equal(in_pieces[0], whole[0])
     np.testing.assert_array_equal(in_pieces[1], whole[1])
+
+
+def test_the_blocks_of_scan_lines_are_corrected_on_the_configured_dask_scheduler(tmp_path, monkeypatch):
+    """Each block of scan lines is a dask task, so the blocks run side by side on the chain's scheduler.
+
+    The whole pass is one compute, and nothing inside a block asks dask for more: a block
+    reads its DEM window directly, so the scheduler's workers are not shared out again
+    within a task. Which scheduler runs it does not change the result.
+    """
+    import dask
+    import georeferencer.georeferencer as georef
+
+    lons, lats, sat_zen, dem = a_pass_over_terrain(tmp_path)
+    monkeypatch.setattr(georef, "ORTHOCORRECTION_LINES_PER_BLOCK", 7)
+    computes = []
+
+    def recording_scheduler(graph, keys, **kwargs):
+        computes.append(keys)
+        return dask.get(graph, keys, **kwargs)
+
+    with dask.config.set(scheduler=recording_scheduler):
+        recorded = orthocorrected(lons, lats, sat_zen, dem)
+    with dask.config.set(scheduler="threads"):
+        threaded = orthocorrected(lons, lats, sat_zen, dem)
+
+    assert len(computes) == 1
+    np.testing.assert_array_equal(recorded[0], threaded[0])
+    np.testing.assert_array_equal(recorded[1], threaded[1])
 
 
 def test_the_distance_along_a_scan_line_is_the_ground_distance_to_within_a_millimetre():

@@ -8,6 +8,7 @@ displacement between a swath image and a reference image.
 import logging
 import os
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
 
@@ -199,8 +200,14 @@ def _build_swath_image(calibrated_ds, sun_zen):
     return da.nan_to_num(swath).astype(np.float32)
 
 
-def _load_reference_image(reference_image_path, calibrated_ds):
-    """Loads a subset of the reference image based on swath bounds."""
+@contextmanager
+def _reference_image_near(reference_image_path, calibrated_ds):
+    """Give the part of the reference image around a swath, its first band in percent, and close it after.
+
+    Left open, the file stays in xarray's own cache until the interpreter closes it at
+    exit, while rasterio is being torn down: that fails, and leaves an empty
+    "Error in sys.excepthook" at the end of every georeferenced run.
+    """
     if "tc_longitude" in calibrated_ds and "tc_latitude" in calibrated_ds:
         lons = calibrated_ds["tc_longitude"]
         lats = calibrated_ds["tc_latitude"]
@@ -208,14 +215,13 @@ def _load_reference_image(reference_image_path, calibrated_ds):
         lons = calibrated_ds["longitude"]
         lats = calibrated_ds["latitude"]
 
-    tif = open_subset_tif(
-        reference_image_path,
-        np.min(lats),
-        np.max(lats),
-        np.min(lons),
-        np.max(lons),
-    )
-    return tif.sel(band=1).astype(np.float32) / 2.55
+    # Only the dataset rioxarray opened closes the file; a subset cut from it does not.
+    dataset = rioxarray.open_rasterio(reference_image_path, engine="rasterio", chunks=512)
+    try:
+        tif = subset_from_bounds(5, dataset, np.max(lats), np.max(lons), np.min(lats), np.min(lons))
+        yield tif.sel(band=1).astype(np.float32) / 2.55
+    finally:
+        dataset.close()
 
 
 def _reproject_to_swath(ref_image, calibrated_ds):
@@ -543,11 +549,11 @@ def measure_swath_displacement(calibrated_ds, sun_zen, sat_zen, reference_image_
     if dem_path:
         calibrated_ds = orthocorrection(calibrated_ds, sat_zen, dem_path)
     swath = _build_swath_image(calibrated_ds, sun_zen)
-    ref_image = _load_reference_image(reference_image_path, calibrated_ds)
-    target_area = _reproject_to_swath(ref_image, calibrated_ds)
+    with _reference_image_near(reference_image_path, calibrated_ds) as ref_image:
+        target_area = np.nan_to_num(_reproject_to_swath(ref_image, calibrated_ds).values, nan=0.0)
     swath_coords, gcp_lonlats = place_gcps_in_swath(reference_gcp_lonlats(reference_image_path), calibrated_ds)
     gcps, valid_gcp_lonlats, valid_swath_coords, carried = find_control_points(
-        swath_coords, gcp_lonlats, swath, np.nan_to_num(target_area.values, nan=0.0)
+        swath_coords, gcp_lonlats, swath, target_area
     )
 
     valid_swath_coords = np.array(valid_swath_coords)

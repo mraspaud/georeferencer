@@ -181,3 +181,43 @@ def test_the_gcps_are_kept_with_their_variance_grid_as_reference_data(tmp_path):
     (kept,) = (tmp_path / "cache").iterdir()
     np.testing.assert_array_equal(gcp_gen.get_gcp_points_from_file(kept), gcps)
     np.testing.assert_array_equal(gcp_gen.get_variance_array_from_file(kept), variance)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="open files are counted through /proc")
+def test_the_reference_image_is_closed_once_it_has_been_read(tmp_path):
+    """The reference image is read within a block that closes it after, and gives its first band in percent.
+
+    Left open, xarray's own cache keeps it open until the interpreter closes it at exit,
+    while rasterio is being torn down: that fails, and leaves an empty "Error in
+    sys.excepthook" at the end of every georeferenced run.
+    """
+    import gc
+
+    import xarray as xr
+    from georeferencer.georeferencer import _reference_image_near
+
+    ground = a_reference(tmp_path / "reference.tif")
+    lons, lats = np.meshgrid(np.linspace(-19.5, -17.0, 40), np.linspace(59.5, 58.0, 30))
+    swath = xr.Dataset({"longitude": (("y", "x"), lons), "latitude": (("y", "x"), lats)})
+
+    with _reference_image_near(tmp_path / "reference.tif", swath) as reference:
+        read = reference.values
+    gc.collect()
+
+    assert read.dtype == np.float32
+    np.testing.assert_allclose(read.max(), ground.max() / 2.55, rtol=1e-6)
+    assert files_held_open(tmp_path / "reference.tif") == 0
+
+
+def files_held_open(path):
+    """Count this process's open file descriptors on *path*."""
+    import os
+
+    target = os.path.realpath(path)
+    held = 0
+    for fd in os.listdir("/proc/self/fd"):
+        try:
+            held += os.path.realpath(f"/proc/self/fd/{fd}") == target
+        except OSError:
+            pass
+    return held
